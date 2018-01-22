@@ -1,0 +1,2423 @@
+---
+title: "Analysis Title"
+author: A Chong
+date: Jan 16, 2018
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Motivation
+I explore different aspects of the donations made to the presidential election of 2016. My main goal is to gain an understanding of different variables that could have gone into play in terms of how much any given candidate raises. 
+And being NY the state where I live, this could prove informative.
+
+### The data
+The dataset contains campaign contributions by individuals from the state of NY.  I cleaned and wrangled the original dataset (http://classic.fec.gov/disclosurep/pnational.do), as documented in project_dataset_preparation.Rmd.
+
+There are 640496 observations of 27 variables. Each row represents a donation.
+The subset of the variables that I analyze in this exploratory analysis are:
+
+***
+
+* party:    
+    + Factor with 4 levels -- Democratic, Republican, Green, Libertarian
+    + Party to which the candidates for which the donations were made                   belong
+
+* candidate:
+    + Factor with 25 levels -- Clinton  Sanders  Trump    O'Malley Cruz                Walker   Bush     Rubio    Kasich Christie Stein    Johnson  Webb                 Graham   Paul     Fiorina  Santorum Jindal Huckabee Pataki                        Gilmore  Carson   Lessig   Perry    McMullin
+    + Presidential candidates to whom donations were made.
+
+* amount:   
+    + Number -- range from 0.01 to 2700
+    + Amount in dollars of donation.           
+
+* amount bucket:
+    + Factor with 4 levels -- (0,15] (15,27] (27,100] (100,2700]
+    + Quartiles of the variable "amount" for the entire dataset, also in dollars.
+
+* donor id:
+    + Integer -- range from 1 to 121922
+    + Unique number to identify a donor.
+
+* gender: 
+    + Factor with 5 levels -- both family female male undet
+    + Gender of the donor as determined from the first name using the R package         "gender" in the data wrangling step.
+        -- female: names given to females more than 90% of time
+        -- male: names given to males more than 90% of time
+        -- both: names that were given to either gender less than 90% of time
+        -- family: donations made on behalf of more than one individual
+        -- undet: names for which gender could not be determined (only initial, no           name, too uncommon in the US)
+
+* city:
+    + Factor with 1455 levels
+    + City to which the donor belongs
+
+* zip:
+    + Character with     levels
+    + Zip to which the donor belongs
+
+* county: 
+    + Character with 63 unique values
+    + County as determined by the zipcode provided by the donor
+
+* county population:
+    + Number with 63 unique values
+    + Population of each of the counties
+
+* day:
+    + Integer -- range from 1 to 31
+    + Day of the month, for example maximum day for february of 2016 is 29
+
+* month: 
+    + Integer -- range from 1 to 12
+    + Month of the year
+
+* year:
+    + Integer -- range from 14 to 16
+    + Year of donations
+
+* time point:
+    + Integer -- range from 285 to 1463
+    + All days consecutively through months and years so that if "Dec 31 2015" is         timepoint n, then "Jan 1 2016" is timepoint n+1. The minimum value is 285         because the first entry was late into 2013, on its 285th day.
+***
+
+
+```{r, echo=FALSE, libraries, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(gender)
+library(genderdata)
+library(lettercase)
+library(zipcode)
+library(noncensus)
+library(stringr)
+library(purrr)
+library(albersusa)#installed via github (devtools::install_github("hrbrmstr/albersusa"))
+library(gridExtra)
+library(grid)
+library(maps)
+library(viridis)
+library(ggthemes)
+library(RColorBrewer)
+library(forcats)
+```
+
+```{r, echo=FALSE, loading_data, message=FALSE, warning=FALSE}
+setwd('/Users/amui/Dropbox/learn/Data_Analyst_nanodegree/project_2_EDA_Exploratory_Data_Analysis/')
+ny <- read.csv("campaign_contrib-NY_modified_USED_FOR_ANALYSIS.csv")
+
+cty_sf <- counties_sf("aeqd")
+cty_ny <- subset(cty_sf, state == "New York")
+cty_ny$county <- as.character(cty_ny$name)
+cty_ny$county[which(cty_ny$county == "St. Lawrence")] <- "Saint Lawrence"
+
+cty_ny <- select(cty_ny,fips, census_area, state, geometry, county)
+
+ny$county <- as.character(ny$county)
+ny <- left_join(ny, cty_ny, by = c("county"))
+
+rm(cty_sf)
+```
+
+
+```{r, echo=FALSE, function_grid_arrange_shared_legend, message=FALSE, warning=FALSE}
+# Function to be used for plotting
+# Copied verbatim from:
+# https://github.com/tidyverse/ggplot2/wiki/Share-a-legend-between-two-ggplot2-graphs
+grid_arrange_shared_legend <- function(..., ncol = length(list(...)), nrow = 1, position = c("bottom", "right")) {
+
+  plots <- list(...)
+  position <- match.arg(position)
+  g <- ggplotGrob(plots[[1]] + theme(legend.position = position))$grobs
+  legend <- g[[which(sapply(g, function(x) x$name) == "guide-box")]]
+  lheight <- sum(legend$height)
+  lwidth <- sum(legend$width)
+  gl <- lapply(plots, function(x) x + theme(legend.position="none"))
+  gl <- c(gl, ncol = ncol, nrow = nrow)
+
+  combined <- switch(position,
+                     "bottom" = arrangeGrob(do.call(arrangeGrob, gl),
+                                            legend,
+                                            ncol = 1,
+                                            heights = unit.c(unit(1, "npc") - lheight, lheight)),
+                     "right" = arrangeGrob(do.call(arrangeGrob, gl),
+                                           legend,
+                                           ncol = 2,
+                                           widths = unit.c(unit(1, "npc") - lwidth, lwidth)))
+
+  grid.newpage()
+  grid.draw(combined)
+
+  # return gtable invisibly
+  invisible(combined)
+
+}
+```
+
+## Univariate Analysis
+
+Summary of the variables contained in the dataset:
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+summary(ny) 
+```
+
+### Donations per candidate
+
+As expected, the candidates that received the greatest number of donations were
+major candidates of each party. And it is unsurprising that the candidate that
+won the popular vote in the general election received the greatest number of
+donations of all.
+However, two things stand out:
+
+- The candidate who went on to be declared president received only the third
+  greatest number of donations, and a little more than a fifth of the
+  candidate immediate above him.
+- The two candidates who received the most contributions were both from the
+  Democratic party.   
+  
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+# Print this out
+ny.candidate <- ny %>%
+  group_by(candidate) %>%
+  summarise(conteo = n()) %>%
+  arrange(desc(conteo))
+
+ny.candidate$candidate <- factor(ny.candidate$candidate, 
+            levels = ny.candidate$candidate[order(-ny.candidate$conteo)])
+```
+
+```{r,echo = FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ggplot(ny.candidate, aes(x = candidate, y = conteo)) + 
+  geom_bar(stat = "identity", colour = "light blue", fill = "light blue") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  scale_y_continuous(limits=c(0,400000), breaks = c(0, 200000, 400000), 
+                     label = c("0","200000","400000")) +
+  labs(title = "Total number of donations received by candidate", y = NULL, x = NULL) +
+  theme(plot.title = element_text(size = rel(1)))
+```
+
+### Party, count of donations to each
+
+The Democratic Party received the greatest number of donations, followed by
+the Republican Party, and then Green and Libertatian.
+
+```{r,echo = FALSE, message=FALSE, warning=FALSE,fig.align = "center", fig.width=6, fig.height=4}
+ggplot(ny,aes(party)) + 
+  geom_bar(colour = "light blue", fill = "light blue") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  scale_y_continuous(limits=c(0,600000),breaks = c(0, 300000, 600000), 
+                     label = c("0","300000","600000")) +
+  labs(title = "Total number of donations made to each party", 
+       y = NULL, x = NULL) +
+  theme(plot.title = element_text(size = rel(1)))
+
+ny$party <- as.factor(ny$party)
+```
+
+Percentage of each party in the dataset, which represents the percentage that each party
+took of the count of donations in New York state.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+round((summary(ny$party)/dim(ny)[1] * 100),2)
+```
+
+
+### Amount of donations
+
+Overall, donations amounts are on the smaller side, if we look at the quartile
+distribution for all the data.
+Half of all donations are $27 or less.
+
+```{r}
+summary(ny$amount)
+```
+
+And 95%  are 500 or less.
+
+```{r}
+quantile(ny$amount, .95)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Most donations, 95% of them, are 500 or less, with 75% being less than 100.
+ggplot(data = subset(ny, amount <= quantile(ny$amount, .95)), aes(x = amount)) +
+  geom_histogram(binwidth = 25, colour = "light blue", fill = "light blue") +
+  labs(title = "Histogram of donations up to 95 quantile of amount donated", 
+       x = 'Donation size', y = 'Count') +
+  theme(plot.title = element_text(size = rel(1)))
+```
+
+
+The five most frequent donation amounts were: $25, $50, $100, $10, and $5, in that order.
+The list below shows the count of times each these amounts were donated.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+amounts_count <- ny %>%
+  group_by(amount) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+head(amounts_count,5)
+```
+
+Opposite to those most favored amounts, were amounts that had only one person having donated them.
+Interestingly, none of these one instance amounts were round dollars, but they were all with cents added. The list below shows a randomly chosen sample of five amounts donated only once.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+less_100 <- subset(ny, amount < 100) %>%
+  group_by(amount) %>%
+  summarise(count = n()) %>%
+  arrange(count)
+```
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+less_100[sample(nrow(less_100), 3), ]
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+less_100 <-  subset(less_100,count == 1)
+less_100_cents <- less_100$amount - floor(less_100$amount)
+#length(which(less_100_cents == 0))
+
+#sum(!(seq(1,250,1) %in% ny$amount))
+#!(seq(1,1000,1) %in% ny$amount)
+
+rm(amounts_count, less_100)
+```
+
+It must be said that there were also plenty of non round amounts (dollars plus cents) that were donated more than once.
+
+Also, there were full dollar amounts that nobody had donated, but these were all for potential donations greater than 250.
+More especifically, any whole dollar amount less than 268, was donated at least 
+twice.
+
+
+
+### Donor: number of donations a person makes
+
+Half of donors donated at most twice, 
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+ny.donors <- ny %>%
+  group_by(donor_id) %>%
+  summarise(conteo = n()) %>%
+  arrange(desc(conteo))
+summary(ny.donors$conteo)
+```
+
+and only 1% of donors donated more than 46 times.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+quantile(ny.donors$conteo, .99)
+```
+
+There could be people on automatic recurring donations, which might explain the 
+1218 donations of more than 45 dolars up to 413.
+
+(*There was one case of a donor who made 1313 donations, I eliminated these 
+entries since I think this must have been an error.)
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+qtle_99 <-ggplot(subset(ny.donors, conteo < quantile(ny.donors$conteo, .99)), 
+                  aes(conteo)) +
+   geom_histogram(binwidth = 1, colour = "light blue", fill = "light blue") +
+   scale_x_continuous(breaks = c(0,10,20,30,40,47)) +
+   labs(x = "Number of donations made, up to 99 percentile", y = "Donor instances") +
+   theme(plot.title = element_text(size = rel(1)))
+ 
+qtle_100 <- ggplot(subset(ny.donors, conteo >= quantile(ny.donors$conteo, .99)), 
+                  aes(conteo)) +
+   geom_histogram(binwidth = 1, colour = "light blue", fill = "light blue") +
+   scale_x_continuous(breaks = c(47, max(ny.donors$conteo))) +
+   labs(x = "Number of donations made, last 1 percentile", 
+        y = "Donor instances") +
+   theme(plot.title = element_text(size = rel(1)))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+grid.arrange(qtle_99, qtle_100, ncol = 1, 
+              top = "Total number of donations made by a single donor")
+```
+
+Notice the change in scale between the two plots above.
+
+
+### Date of donations
+
+Expectedly, the donation rate tracks the election, with most donations taking
+place in 2016 as november approaches.
+
+The graphs below show the number of donations across consecutive days in the two years leading up to the election.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+jan1_15 = unique(subset(ny,year == 15 & month == 1 & day == 3)$time_point) - 2
+dec31_15 = unique(subset(ny,year == 15 & month == 12 & day == 31)$time_point)
+jan1_16 = unique(subset(ny,year == 16 & month == 1 & day == 1)$time_point)
+jul21_16 = unique(subset(ny,year == 16 & month == 7 & day == 21)$time_point)
+jul28_16 = unique(subset(ny,year == 16 & month == 7 & day == 28)$time_point)
+sep16_16 = unique(subset(ny,year == 16 & month == 9 & day == 16)$time_point)
+oct4_16 = unique(subset(ny,year == 16 & month == 10 & day == 4)$time_point)
+oct14_16= unique(subset(ny,year == 16 & month == 10 & day == 14)$time_point)
+nov6_16 = unique(subset(ny,year == 16 & month == 11 & day == 6)$time_point)
+dec31_16 = unique(subset(ny,year == 16 & month == 12 & day == 31)$time_point)
+
+ggplot(ny, aes(time_point)) +
+  geom_bar(color = "light blue") +
+  labs(title = "Total number of donations from 1-1-15 to 12-31-16",
+       y = "Count", x = NULL) +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16),
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits = c(jan1_15,dec31_16)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8))
+```
+
+Zooming in 2016.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ggplot(ny, aes(time_point)) +
+  geom_bar(color = "light blue")  +
+  scale_x_continuous(breaks = c(jan1_16,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16),
+                    label = c("Jan 1 2016","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits = c(jan1_16,dec31_16)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  theme(plot.title = element_text(size = rel(1))) +
+  labs(title = "Total number of donations from 1-1-15 to 12-31-16", 
+        y = "Count", x = NULL)
+  
+
+```
+
+Looking at number of donations by month.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+
+max_15 = dim(subset(ny, year == 15 & month ==12 & day == 31))[1]
+ann_text <- data.frame(lab = "Text",
+                       month = factor(1,levels = c("1","2","3","4","5","6","7",
+                                                    "8","9","10","11","12")))
+
+ggplot(subset(ny, year == 15), aes(x = day)) +
+   geom_bar(colour = "light blue", fill = "light blue") +
+   facet_wrap(~month) +
+   labs(title = "2015 Total number of donations by month", y = NULL) +
+   theme(plot.title = element_text(size = rel(1)))
+ 
+ggplot(subset(ny, year == 16), aes(x = day)) +
+  geom_bar(colour = "light blue", fill = "light blue") +
+  facet_wrap(~month) +
+  labs(title = "2016 Total number of donations by month", y = NULL) +
+  theme(plot.title = element_text(size = rel(1))) +
+  geom_text(data = ann_text, aes(x=5, y=max_15), size = 2.5,
+            label = "______ Maximum in 2015", color = "purple")
+```
+
+Generally, in 2016, the end of the month is when most donations are made,
+excepting November.
+
+
+### Gender, count of donations by each
+
+Donations are distributed between males and females very similarly. While there are more donations by females, there is the possibility that the counts made up of androgynous names plus those of names for which gender could not be determined, if they were all masculine, could even out the difference.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ggplot(ny,aes(gender)) + 
+  geom_bar(colour = "light blue", fill = "light blue") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  scale_y_continuous(limits=c(0,400000), breaks = c(0, 200000, 400000), 
+                     label = c("0","200000","400000")) +
+  labs(title = "Total number of donations made by each gender", 
+       y = NULL, x = NULL) +
+  theme(plot.title = element_text(size = rel(1)))
+
+```
+
+Percentage of each gender in the dataset.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+round((summary(ny$gender)/dim(ny)[1] * 100),2)
+```
+
+### Cities: count of donations per each.
+
+There are 1456 unique cities in the dataset.
+Half of them were home to 53 donations or less, 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Unique cities
+uique_cities = length(unique(ny$city))
+
+# Summarise count by city
+ny.citycount <- ny %>%
+  group_by(city) %>%
+  summarise(conteo = n(), total_amount = sum(amount), 
+            mean_amount = mean(amount), seventy5 = quantile(amount, .75), max_amount = max(amount)) %>%
+  arrange(desc(conteo))
+
+summary(ny.citycount$conteo)
+```
+
+with 79 being home to a single donation,
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+length(which(ny.citycount$conteo == 1))
+```
+
+and 15 cities being the origin of donation counts greater than 3033.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+quantile_99 = quantile(ny.citycount$conteo, .99)
+length(which(ny.citycount$conteo >= quantile_99))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Histogram
+less_1000 <- ggplot(subset(ny.citycount, conteo<1000), aes(conteo)) +
+  geom_histogram(binwidth = 30, fill = "light blue") +
+  labs(x = 'Number of donations, up to 1000', y = 'City instances')
+more_1000 <- ggplot(subset(ny.citycount, conteo>=1000), aes(conteo)) +
+  geom_histogram(binwidth = 30, fill = "light blue") +
+  labs(x = 'Number of donations, over 1000', y = 'City instances')
+
+grid.arrange(less_1000, more_1000, ncol = 1, 
+             top = "Distribution of number of donations originated from a city")
+
+```
+
+The following plot shows which cities were the origin the of greatest number of donations.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Bar plot
+ny.citycount$city <- factor(ny.citycount$city, 
+            levels = ny.citycount$city[order(-ny.citycount$conteo)])
+
+ggplot(ny.citycount[1:30,], aes(city, conteo)) +
+  geom_col(fill = "light blue") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  labs(title = "Donation count by city, 30 cities with most donations ", 
+       x = 'City', y = 'Count of donations')
+```
+
+As expected, these correspond to densely populated areas, so the number of donations matches what we know about the population. And although city population is not part of this datataset, this indicates that it would be a relevant variable to include.
+
+### Zipcodes: count of donations from each
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+us<-map_data('state')
+us <- subset(us, region == "new york")
+
+# Summarise count by zip
+ny.zipcount <- ny %>%
+  group_by(zip, latitude_zip, longitude_zip, city) %>%
+  summarise(conteo = n()) %>%
+  arrange(conteo)
+
+```
+
+Three quarter of zips were home to less than 125 donations, with half of them
+being the origin of only 27.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+summary(ny.zipcount$conteo)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Histogram
+less_1000 <- ggplot(subset(ny.zipcount, conteo<1000), aes(conteo)) +
+  geom_histogram(binwidth = 30, fill = "light blue") +
+  labs(x = 'Number of donations, up to 1000', y = 'Zip instances')
+more_1000 <- ggplot(subset(ny.zipcount, conteo>=1000), aes(conteo)) +
+  geom_histogram(binwidth = 30, fill = "light blue") +
+  labs(x = 'Number of donations, over 1000', y = 'Zip instances')
+
+grid.arrange(less_1000, more_1000, ncol = 1, 
+             top = "Distribution of number of donations originated from a zip")
+```
+
+The zips home to the greatest number of donations are all from New
+York City or Brooklyn area, which is confirmed when we look at the distribution of cities.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Map
+ggplot(ny.zipcount,aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),color='light gray',fill=NA,alpha=.35)+
+  geom_point(aes(color = conteo),alpha=.4) +
+  scale_colour_gradient(high = 'dark blue', low = 'light blue') +
+  labs(title = "Donations count from zipcode", 
+       x = 'Longitude', y = 'Latitude', color = "Count of donations") +
+  theme(plot.title = element_text(size = rel(1)))
+
+rm(don_cities,ny.zipcount)
+```
+
+
+### County: count of donations from each
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+us<-map_data('state')
+us <- subset(us, region == "new york")
+
+# Summarise count by county
+ny.countycount <- ny %>%
+  group_by(county) %>%
+  summarise(conteo = n()) %>%
+  arrange(conteo)
+
+# Getting county geometry
+ny.countycount <- left_join(ny.countycount, cty_ny, by = c("county"))
+```
+
+The count of donations by zip is corroborated by the count of donations by 
+county. Again, the more densely populated area of the south east of the
+state has the highest count of donations originating there.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Map of donation counts by county
+ggplot(ny.countycount, aes(fill = conteo)) +
+  geom_sf()+
+  scale_fill_distiller(palette = "YlGnBu", direction = 1) +
+  theme_map(base_size=11) +
+  theme(legend.position = "right") +
+  labs(title = "Number of donations per county", 
+       x = 'Longitude', y = 'Latitude', fill = "Count of donations") +
+  theme(plot.title = element_text(size = rel(1)))
+```
+
+
+### County population
+
+Most counties have a small population, with the distribution of counties by population in the state heavily skewed to the right.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ny.county <- ny %>%
+  group_by(population_county, county, population_county_bucket) %>%
+  summarise(n = n())
+
+ggplot(ny.county, aes(population_county, 
+                      fill = population_county)) + 
+  geom_histogram(bins = 100) +  # HAS TO be 100, that's how labels are divided
+  labs(x = "County population", y="Number of counties",
+       title = "Counties by population", fill = "County population")
+```
+
+The map below shows the population of the counties plotted above, and we can already see that there is an overlap between the regions home to the most donations and the regions most densely populated.
+While this isn't anything surprising, it works well for reassurance and a bit of sanity check.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ny.countypopulation <- ny %>%
+  group_by(county, population_county) %>%
+  summarise(n = n())
+
+# Getting county geometry
+ny.countypopulation <- left_join(ny.countypopulation, cty_ny, by = c("county"))
+
+# Map of county population
+ggplot(ny.countypopulation, aes(fill = population_county)) +
+  geom_sf()+
+  scale_fill_distiller(palette = "YlGnBu", direction = 1) +
+  theme_map(base_size=11) +
+  theme(legend.position = "right") +
+  labs(title = "Population of each county", fill = "County population", 
+       x = 'Longitude', y = 'Latitude') +
+  theme(plot.title = element_text(size = rel(1)))
+```
+
+
+### Repeat donors
+
+Out of the total donations, 589708 were repeat donations, which represents 
+92% of all donations, and 58% of all donors.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+repeats <- ny %>%
+  group_by(donor_id)%>%
+  summarise(conteo = n(), total = sum(amount)) %>%
+  arrange(desc(conteo))
+
+# Subset of unique and of repeat donations
+uniques <- subset(repeats, conteo ==1)
+repeats <- subset(repeats, conteo >1)
+
+# Count of unique donations, those that are not in the repeats subset
+uniq_don <- length(which(!(ny$donor_id %in% repeats$donor_id)))
+
+# Count of repeat donations, got twice for sanity check
+rep_donation1 <- dim(ny)[1] - uniq_don
+rep_donation2 <- length(which(ny$donor_id %in% repeats$donor_id))
+check = rep_donation1 == rep_donation2
+rep_donation = rep_donation1
+
+# Repeat donations and donnors, percentages of totals
+rep_donation_perc <- round((rep_donation/dim(ny)[1])*100,2)
+rep_donor_perc <- round((length(unique(repeats$donor_id))/
+                            length(unique(ny$donor_id)))*100,2)
+
+```
+
+Most donors that repeat, do so few times. 
+Half of those who repeat do so less than 4 times, and three out of four donate 9 times or fewer.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+summary(repeats$conteo)
+```
+
+Only one out of ten donates 19 times or more.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+quantile(repeats$conteo, .9)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Histogram
+less_100 <- ggplot(subset(repeats, conteo<100), aes(conteo)) +
+  geom_histogram(binwidth = 5, fill = "light blue") +
+  labs(x = 'Number of donations by a single donor, up to 100', y = 'Donor instances')
+more_100 <- ggplot(subset(repeats, conteo>=100), aes(conteo)) +
+  geom_histogram(binwidth = 30, fill = "light blue") +
+  labs(x = 'Number of donations by a single donor, over 100', y = 'Donor instances')
+
+grid.arrange(less_100, more_100, ncol = 1, 
+             top = "Distribution of number of donations by a single donor (who repeats)")
+
+
+```
+
+#### Dataset features
+
+The main features are candidate and donation amount. I would like to describe what led to the total recaudated by each candidate.
+
+Other features are party, date (in its various sizes), gender, and geography, as they all could interact and affect how much money gets to each candidate. They are also intrinsically interesting.
+
+With the present dataset, I log transformed donation count and donation amount for each candidate, since this transformation reveals a correlation pattern.
+
+#### Univariate analysis summary
+
+##### Party
+Democrats received several times more donations than any other party, and that this was driven by two main candidates: Clinton and Sanders. The next party in number of donations was the Republican party and they received only 1/8 of the Democrats. The other two parties combined received much less than a tenth of a percent of all donations.
+
+##### Candidate
+The candidates that received the greatest number of donations turned out to be major candidates of each party. With hindsight knowledge, we can notice two things stand out:
+
+*	The candidate who went on to be declared president received only the third greatest number of donations, and a little more than a fifth of the candidate immediate above him.
+
+*	The two candidates who received the most contributions were both from the Democratic party.
+
+
+##### Amount
+Most donations are small: 75% were 100 dollars or less, a fraction of the maximum 2700 allowed.
+And half of all donations are $27 or less.
+The five most frequent donation amounts were: $25, $50, $100, $10, and $5, in that order. The list frequent amounts all were non-whole dollar amounts ending in cents.
+
+##### Donor
+Most donors contributed money very few times: 75% gave money five times or less, and half of donors gave money between one and two times. 
+Of those who donated more than one time, half did so less than 4 times, and three out of four donated 9 times or fewer.
+
+##### Gender
+Gender distribution among donors is approximately equally distributed with women making up only a slightly larger number of donations than men. 
+
+##### Time
+The pace of donations follows the approach of the election. Most donations take place in 2016 as november approaches.
+Generally, in 2016, the end of the month is when most donations are made, excepting November.
+
+##### Geography
+Most donations come from the south-east corner of the state, regardless of whether we look at zipcode or county. Other important centers align with the location of cities that are source to large numbers of donations: those in the New York City area, Rochester, Buffalo, Albany, Ithaca, Astoria, and Syracuse.
+
+###### City
+There are 1456 unique cities in the dataset. Half of them were home to 53 donations or less, with 79 being home to a single donation, and 15 cities being the origin of donation counts greater than 3033.
+
+As expected, these correspond to densely populated areas, so the number of donations matches what we know about the population. And although city population is not part of this datataset, this indicates that it would be a relevant variable to include.
+
+###### Zip
+Three quarter of zips were home to less than 125 donations, with half of them being the origen of only 27.
+The zips home to the greatest number of donations are all from New York City or Brooklyn area, which is confirmed when we look at the distribution of cities.
+
+###### County
+The count of donations by zip is corroborated by the count of donations by county. Again, the more densely populated area of the south east of the state has the highest count of donations originating there.
+
+###### County population
+Most counties have a small population, and a few have very large. The distribution of county population is very skewed to the right.
+
+
+
+
+## Bivariate Plots Section
+
+
+### Amount: party, candidate, gender, geography, date
+
+As we had seen, 75% of all donations in the data are 100 $ or less.
+We also saw that parties and candidates varied in the share of donations they
+received.
+In this section, I will explore whether the observation that donations are small
+is equally distributed by party and candidate, or whether there are any specific
+candidates or party driving this pattern.
+Finally, we will look at whether the gender or geographic location of the donor,
+or the date when they donated, was related to the amount contributed.
+
+#### Amount by Party
+
+Small amount donations was not a trait of all parties.
+
+Distribution of amounts for the dataset.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+summary(ny$amount)
+```
+
+While over half (53%) of the Democratic party's donations belonged to the two lower quartiles, the opposite is true of the Republican (73% of its donations belonged to the upper quartiles).
+
+The figure below shows what share of each party belonged to each quartile of
+the whole dataset.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+dems <- dim(subset(ny, party == "D" & amount <= 27))[1]/dim(subset(ny, party == "D"))[1]
+reps <- dim(subset(ny, party == "R" & amount > 27))[1]/dim(subset(ny, party == "R"))[1]
+
+ggplot(ny, aes(party, fill = amount_bucket)) +
+  geom_bar() +
+  scale_fill_brewer(labels = c("0-15 $", "15.01-27 $", 
+                                             "27.01-100 $","100.01-27000 $")) +
+  labs(title = "Distribution of donation amounts by party", 
+       fill = "Whole data quartiles range", y= "Donations count", x = "Party") +
+  scale_y_continuous(lim = c(0,570000), breaks = seq(0,570000, 570000/2), 
+                     labels = c("0","285000","570000") )
+```
+
+The following boxplots show that the Democratic party received smaller donations
+than the Republican, in turn smaller than the Green and the Libertarian. 
+
+Since the donation amounts tend to concentrate on the low values, I performed a log10 transformation in order to more easily detect any differences.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+norm <- ggplot(ny, aes(reorder(party, amount,mean, order = TRUE), 
+               amount, colour = party)) + 
+  geom_boxplot(outlier.alpha = .05, notch = TRUE, outlier.size = 1) +
+  scale_color_manual(values=c("blue", "green", "black", "red")) +
+  labs(y = "Donations amount $", x = "Party") +
+  theme(legend.position = "off")
+
+transf <- ggplot(ny, aes(reorder(party, amount,mean, order = TRUE), 
+               log10(amount), colour = party)) + 
+  geom_boxplot(outlier.alpha = .05, notch = TRUE, outlier.size = 1) +
+  scale_color_manual(values=c("blue", "green", "black", "red")) +
+  labs(y = "Donations amount, log 10 transformed", x = "Party")+
+  theme(legend.position = "off")
+  
+grid.arrange(norm, transf, ncol = 2, 
+             top = "Amount of single donations by party")
+```
+
+I performed a one way ANOVA test to determine whether there was any significant difference between the amounts donated to each party.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Source:  http://www.sthda.com/english/wiki/one-way-anova-test-in-r#what-is-one-way-anova-test
+
+# Compute the analysis of variance
+res.aov <- aov(amount ~ party, data = ny)
+# Summary of the analysis
+summary(res.aov)
+```
+
+And a Tukey test for significant differences confirmed that in fact donations to the Democratic party were significantly smaller than to any other party, followed by the Republican and Green parties (no significant difference between them), followed by the Libertarian party.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+TukeyHSD(res.aov)
+```
+
+#### Amount by Candidate
+
+Small donations is not a trait of all candidates either. In fact, it seems that 
+top contenders were the recipients of  smaller contributions than less 
+competitive candidates.
+This is true of both parties. However, given that the Democratic Party had a 
+greater share of small contributions than the Republican, it's no surprise that 
+its top candidates had the greatest share of their contributions being a small 
+amount.
+
+While the top democratic contenders (Clinton and Sanders) were 
+the recipients of most donations, the amount of each donation was smaller than 
+that of the republican frontrunners (Trump and Cruz).
+
+
+The following graph shows the distribution of donations amount for all candidates.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Amount of donations
+ggplot(ny, aes(reorder(candidate, amount, median, order=TRUE), amount, 
+               colour = party)) + 
+  geom_boxplot(outlier.alpha = .05, notch = FALSE, outlier.size = 1) +
+  scale_color_manual(values=c("blue", "green", "black", "red")) +
+  labs(title = "Most common amount of single donations by candidate", 
+         y = "Donationsa amount $", x = "Candidates") +
+  theme(plot.title = element_text(size = rel(1))) +
+  theme(axis.text.x=element_text(angle=90,hjust=1))
+```
+
+Notice that the distributions for most candidates were skewed to the right, 
+consistent with the finding that most people tended to give towards the lower rather than the 
+upper limits.
+
+
+As per the candidates who received 10 000 donations or more, three out of four
+donations given to Sanders were 50 dollars or less, to Clinton and Cruz 100 or 
+less, and to Trump 160 or less.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ny.candidate <- ny %>%
+  group_by(candidate, party) %>%
+  summarise(median = median(amount), seventyfive_qtle = quantile(amount, .75),
+            ninetyfive_qtle = quantile(amount, .95), 
+            count = n(), total_dollars = sum(amount)) %>%
+  arrange(desc(count))
+
+arrange(head(ny.candidate, 4), seventyfive_qtle)
+```
+
+
+
+The candidates who received smaller amounts of donations also received the 
+greatest number of donations.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ggplot(ny.candidate, aes(log10(seventyfive_qtle), log10(total_dollars), colour = party)) +
+    geom_text(label = ny.candidate$candidate) +
+    scale_color_manual(values=c("blue", "green", "black", "red")) +
+    theme(legend.position="none") +
+    labs(title = "Total received vs.donation amount", 
+         x = "Amount of 75% of donations -log10", y = "Total dollars raised $ -log10") +
+    theme(plot.title = element_text(size = rel(1)), legend.position="none") +
+  scale_x_continuous(limits = c(1,4))
+```
+
+A simple linear model between log10 of total raised and the maximum amount of 75% of donations suggests a linear relationship between the log10 of both variables.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+#cor(log10(ny.candidate$seventyfive_qtle),log10(ny.candidate$total_dollars))
+
+lmfit = lm(data = ny.candidate, log10(total_dollars) ~ log10(seventyfive_qtle))
+summary(lmfit)
+```
+
+
+Receiving a large number of donations was enough to not only offset but surpass in total amount raised, the candidates whose contributors gave more money per donation.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ggplot(ny.candidate, aes(log10(seventyfive_qtle), log10(count), 
+                                  colour = party)) +
+    geom_text(label = ny.candidate$candidate) +
+    scale_color_manual(values=c("blue", "green", "black", "red")) +
+    theme(legend.position="none") +
+    labs(title = "Count of donations vs. donation amount", 
+         x = "Amount of 75% of donations -log10", 
+         y = "Count of donations received -log10") +
+    theme(plot.title = element_text(size = rel(1)), legend.position="none") +
+  scale_x_continuous(limits = c(1,4))
+  
+```
+
+A linear model of the log10 of these variables suggests a linear relation that is expectedly negative.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+#cor(log10(ny.candidate$seventyfive_qtle),log10(ny.candidate$count))
+lmfit = lm(data = ny.candidate, log10(count) ~ log10(seventyfive_qtle))
+summary(lmfit)
+
+```
+
+
+The result is the fact that those candidates who received the most contributions also accumulated the greatest total.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ggplot(ny.candidate, aes(log10(count), log10(total_dollars), colour = party)) +
+  geom_text(label = ny.candidate$candidate) +
+  scale_color_manual(values=c("blue", "green", "black", "red")) +
+  labs(title = "Total raised by number of donations received -- in log 10", 
+         x = "Donations received -log10", y = "Total raised -log10") +
+  theme(plot.title = element_text(size = rel(1)), legend.position="none")  
+
+```
+
+And a significant linear model suggests a positive linear relationship between the log10 of donation count and total money recaudated.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+#cor(log10(ny.candidate$count),log10(ny.candidate$total_dollars))
+lmfit = lm(data = ny.candidate, log10(count) ~ log10(total_dollars))
+summary(lmfit)
+```
+
+
+##### Donation size, number of donations received, total amount raised -- by candidate and party. 
+
+The following two plots convey one of the main findings of this analysis, by putting these three important variables together: donation size, number of donations received, total amount raised.
+Top raisers totaled the most money despite receiving the smaller size individual contributions because they received a very large number of them.
+
+In the next plot, the small amount of donations is reflected in the value of their 75% percentile (although this holds for other chosen quantiles, as we will see later).
+Small contributors make an enormous difference, by the sheer power of their numbers, despite their small effect individually.
+It must be noted that this patterns persists across candidates of all parties.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12, fig.height = 6}
+ggplot(ny.candidate, aes(log10(count), log10(total_dollars)+.15)) +
+  geom_point(aes(log10(count), log10(total_dollars), 
+                         colour = party, size = log10(seventyfive_qtle))
+             , alpha =.7) +
+  geom_text(label = ny.candidate$candidate, color = 'dark grey') +
+  scale_color_manual(values=c("blue", "green", "black", "red")) +
+  labs(title = "Total raised by number of donations received -- in log 10", 
+         x = "Donations received -log10", y = "Total raised -log10",
+       party = NULL, size = "Maximum amount of 75% of donations - log10")
+```
+
+
+The following plot is a confirmation, with a cosmetic change for visualization exploration, with size in the font of the candidate names itself.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12, fig.height = 6}
+ggplot(ny.candidate, aes(log10(count), log10(total_dollars), 
+                         colour = party, size = log10(seventyfive_qtle))) +
+  geom_text(label = ny.candidate$candidate) +
+  scale_color_manual(values=c("blue", "green", "black", "red")) +
+  labs(title = "Total raised by number of donations received -- in log 10", 
+         x = "Donations received -log10", y = "Total raised -log10",
+       party = NULL, size = "Maximum amount of 75% of donations -log10")
+
+```
+
+
+The following plot puts together total raised, donation size, and number of donations received, with candidates ranked from highest total to smallest.
+It shows that those candidates that raised most also received the smallest amount for 75% of their donations, see how marker size increases with decreasing total raised values. Conversely, number of donations and total recaudated go in hand together, higher brightness values are for those with most money received.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12, fig.height = 6}
+ggplot(ny.candidate, aes(reorder(candidate, log10(count), order=TRUE), 
+                         log10(total_dollars), 
+                         colour = log10(count), size = log10(seventyfive_qtle))) +
+  geom_point() +
+  labs(title = "Total raised by candidate, by donations 75% percentile amount, by number of donations received", 
+         y = "Total raised - log10", x = "Candidates",
+       size = "Maximum amount of 75% of donations - log10", 
+       colour = "Count of donations received - log10") +
+  theme(plot.title = element_text(size = rel(1))) +
+  theme(axis.text.x=element_text(angle=90,hjust=1))
+```
+
+
+##### Amount over time
+
+Looking at all donations over time is impractical, as the following plot shows. However, it serves to identify donation amounts that remained popular over time.
+This plot also succeeds only in confirming that there is an increase in donations over time.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width=12, fig.height=8}
+ggplot(subset(ny, year == 15 | year ==16), aes(time_point, amount)) +
+  geom_point(size = .1, alpha = .02, position = position_jitter(),
+             fill = "light blue") +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Election")) +
+  labs(title = "Amounts donated on each day",
+       y = "Amount $", x = "Days")
+```
+
+However, if we look at amounts in buckets, trends start to appear.
+
+Very early on, there are few donations but they tend to be large. As 2016
+progresses, smaller amounts begin to make up a larger share of all donations.
+
+(*There were 44 entries of donations made in 2013 and 2014 to Rubio, Paul, Webb 
+and Cruz. They added up to $47701.6 with a median of $500 and mean $1084.)
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width=12, fig.height=8}
+ggplot(subset(ny,year == 15 | year == 16), aes(time_point)) +
+  geom_area(aes(y = ..count.., fill = amount_bucket), 
+            stat = "bin", binwidth = 10) +
+  scale_fill_brewer(palette = "Blues", labels = c("0-15 $", "15.01-27 $", 
+                                             "27.01-100 $","100.01-27000 $")) +
+  scale_color_brewer(palette = "Blues") +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election")) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Donation amounts from 1-1-15 to 12-31-16", 
+       fill = "Amount quartiles", y= "Donations count", x = "Day")
+```
+
+
+Broken down by month for each of the last two years leading up to the election.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ggplot(subset(ny,year == 15 | year == 16), aes(as.factor(month), fill = amount_bucket)) +
+  geom_bar() +
+  facet_wrap(~year) +
+  scale_fill_brewer(labels = c("0-15 $", "15.01-27 $", 
+                                             "27.01-100 $","100.01-27000 $")) +
+  labs(title = "Donation amounts by month for each year 2015 and 2016", 
+       fill = "Amount quartiles", y= "Donations count", x = "Month")
+```
+
+Broken down by day by month of each of the last two years leading up to the election.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ggplot(subset(ny, year == 15), aes(x = day, fill = amount_bucket)) +
+  geom_bar(width=1) +
+  facet_wrap(~month) +
+  scale_fill_brewer(labels = c("0-15 $", "15.01-27 $", 
+                                             "27.01-100 $","100.01-27000 $")) +
+  labs(title = "Donation amounts throughout 2015", 
+       fill = "Whole data quartiles range", y= "Donations count", x = "Day")
+
+ggplot(subset(ny, year == 16), aes(x = day, fill = amount_bucket)) +
+  geom_bar(width=1) +
+  facet_wrap(~month) +
+  scale_fill_brewer(labels = c("0-15 $", "15.01-27 $", 
+                                             "27.01-100 $","100.01-27000 $")) +
+  labs(title = "Donation amounts throughout 2016", 
+       fill = "Whole data quartiles range", y= "Donations count", x = "Day")
+```
+
+
+##### Amount over time by party
+
+If we break down donations amount over time by party, we see that the two major parties show different trends. The greatest peak in donations for the Democratic party was shortly before the election, whereas the peak for the Republican party was around its convention. In its peak, the bulk of contributions to the Republican party belonged to the upper quartile amount, contributions greater than $100.01, and towards the end most were either in the second (15 to 27 dollars) or the upper (larger than 100) quartiles. The opposite is true of the Democratic party, which didn't change much over time, and at its peak received most of its contributions from the lower three quartiles, donations of less than $100 dollars.
+
+It is also interesting to see a rise upwards in donations to the Democrats (and candidate Clinton) after each of the debates.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width = 12,fig.height = 8, fig.align = "center", fig.align = "center"}
+
+
+dem <- ggplot(subset(ny,(year == 15 | year == 16) & party =='D'), 
+              aes(time_point)) +
+  geom_area(aes(y = ..count.., fill = amount_bucket), 
+            stat = "bin", binwidth = 5) +
+  scale_fill_brewer(palette = "Blues",
+                    labels = c("0-15 $", "15.01-27 $",
+                               "27.01-100 $","100.01-27000 $")) +
+  scale_color_brewer(palette = "Blues") +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits=c(jan1_15,dec31_16)) +
+  scale_y_continuous(limits=c(0,30000)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Democrats", fill = "Amount quartiles", 
+       y= "Donations count", x = "Day")
+
+rep <- ggplot(subset(ny,(year == 15 | year == 16) & party =='R'), 
+              aes(time_point)) +
+  geom_area(aes(y = ..count.., fill = amount_bucket), 
+            stat = "bin", binwidth = 5) +
+  scale_fill_brewer(palette = "Blues", 
+                    labels = c("0-15 $", "15.01-27 $",
+                               "27.01-100 $","100.01-27000 $")) +
+  scale_color_brewer(palette = "Blues") +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits=c(jan1_15,dec31_16)) +
+  scale_y_continuous(limits=c(0,5000)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Republicans", 
+       fill = "Amount quartiles", y= "Donations count", x = "Day")
+
+grid_arrange_shared_legend(dem, rep, nrow = 2,ncol=1,
+                           top = "Donation amounts from 1-1-15 to 12-31-16")
+```
+
+Breaking time points down by month, for both in 2015 and 2016.
+
+##### 2015
+
+For Democrats, number of donations and their size go upward as 2015 progresses, with peaks within months that do not seem to follow any particular pattern. In five out of the nine months with donations, these tend to increase towards the end of the month.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width = 12,fig.height = 8, fig.align = "center", fig.align = "center"}
+
+ggplot(subset(ny,(year == 15) & party =='D'), 
+              aes(x = day, fill = amount_bucket)) +
+  geom_bar(width=1) +
+  facet_wrap(~month) +
+  scale_fill_brewer(labels = c("0-15 $", "15.01-27 $", 
+                                             "27.01-100 $","100.01-27000 $")) +
+  labs(title = "Democrats, donation amounts throughout 2015", 
+       fill = "Whole data quartiles range", y= "Donations count", x = "Day") +
+  scale_y_continuous(limits=c(0,1000)) +
+  scale_x_discrete(limits=c(1,31)) +
+  labs(title = "Democrats, donation amounts throughout 2015", 
+       fill = "Amount quartiles", 
+       y = "Donations count", x = "Day")
+
+```
+
+There were considerably fewer donations to the Republican party in 2015 than to the Democratic party. But like the Democractic party, the month-by-month breakdown does not show any particularly salient trends in 2015.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width = 12,fig.height = 8, fig.align = "center", fig.align = "center"}
+ggplot(subset(ny,(year == 15) & party =='R'), 
+              aes(x = day, fill = amount_bucket)) +
+  geom_bar(width=1) +
+  facet_wrap(~month) +
+  scale_fill_brewer(labels = c("0-15 $", "15.01-27 $", 
+                                             "27.01-100 $","100.01-27000 $")) +
+  labs(title = "Democrats, donation amounts throughout 2015", 
+       fill = "Whole data quartiles range", y= "Donations count", x = "Day") +
+  scale_y_continuous(limits=c(0,1000)) +
+  scale_x_discrete(limits=c(1,31)) +
+  labs(title = "Republicans, donation amounts throughout 2015", 
+       fill = "Amount quartiles", 
+       y = "Donations count", x = "Day")
+```
+
+##### 2016
+
+The only salient pattern in donations by month in 2016 to the Democratic party is that the end of the month is a good time for donations. This pattern was present in a few months of 2015, although there were fewer donations then.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width = 12,fig.height = 8, fig.align = "center", fig.align = "center"}
+
+ggplot(subset(ny,year == 16 & party =='D'), 
+              aes(x = day, fill = amount_bucket)) +
+  geom_bar(width=1) +
+  facet_wrap(~month) +
+  scale_fill_brewer(labels = c("0-15 $", "15.01-27 $", 
+                                             "27.01-100 $","100.01-27000 $")) +
+  labs(title = "Democrats, donation amounts throughout 2016", 
+       fill = "Whole data quartiles range", y= "Donations count", x = "Day") +
+  scale_y_continuous(limits=c(0,6000)) +
+  scale_x_discrete(limits=c(1,31)) +
+  labs(title = "Democrats, donation amounts throughout 2016", 
+       fill = "Amount quartiles", 
+       y = "Donations count", x = "Day")
+
+```
+
+2016 donations to the Republican party do not follow the end-of-month surge that we see in the Democratic party donations, but instead, they seem flat except for spurts between mid june and mid august. I hypothesize that this might be related to patriotic feelings around the celebration of the 4th of july. Iy must be noted, however, that donations on july 4th itself are quite small.
+I must also note the difference in scale for 2016 between the Democratic and Republican party donations. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width = 12,fig.height = 8, fig.align = "center", fig.align = "center"}
+
+ggplot(subset(ny,year == 16 & party =='R'), 
+              aes(x = day, fill = amount_bucket)) +
+  geom_bar(width=1) +
+  facet_wrap(~month) +
+  scale_fill_brewer(labels = c("0-15 $", "15.01-27 $", 
+                                             "27.01-100 $","100.01-27000 $")) +
+  labs(title = "Democrats, donation amounts throughout 2016", 
+       fill = "Whole data quartiles range", y= "Donations count", x = "Day") +
+  scale_y_continuous(limits=c(0,3000)) +
+  scale_x_discrete(limits=c(1,31)) +
+  labs(title = "Republicans, donation amounts throughout 2016", 
+       fill = "Amount quartiles", 
+       y = "Donations count", x = "Day")
+
+```
+
+
+#### Amount by gender
+
+There isn't a difference in the amount of money given per donation between
+females and males for the whole dataset.
+Donations by females tend to be slightly lower (lower quantiles, lower minimum),
+but do not seem sensitively different from those by males.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Creating subset for each gender
+female <- subset(ny, gender == "female")
+male <- subset(ny, gender == "male")
+```
+
+Females:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+summary(female$amount)
+```
+
+Males:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+summary(male$amount)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Subset for plotting excludes three other values that are not 
+# "female" or "male".
+
+# Boxplot of nontransformed donation amounts
+reg <- ggplot(subset(ny, gender == "female" | 
+                       gender == "male"), 
+       aes(gender,amount, colour = gender)) +
+  geom_boxplot(color = c("dark blue", "purple"),
+               outlier.alpha = .05, notch = TRUE, outlier.size = 1) +
+  labs(y = "Donation amount $")
+
+# Boxplot of log10-transformed donation amounts
+log <- ggplot(subset(ny, gender == "female" | 
+                       gender == "male"), 
+       aes(gender,log10(amount), colour = gender)) +
+  geom_boxplot(color = c("dark blue", "purple"),
+               outlier.alpha = .05, notch = TRUE, outlier.size = 1) +
+  labs(y = "Donation amount $ -- log10")
+
+grid.arrange(reg, log, ncol = 2,
+                           top = "Gender differences in donation amount")
+```
+
+An idependent two-group t-test confirms this. 
+For both actual data 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+t.test(female$amount,male$amount)
+```
+
+and log10 transformed.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+t.test(log10(female$amount),log10(male$amount))
+```
+
+#### Amount by geographical location: city, zip and county
+
+There is no significant relation between geography and amount of donations. Big
+and small donations seem to originate similarly from all points, proportional
+to the amount of donations.
+
+By city:
+By looking at three different grain sizes, it does not seem that there is any significant relationship between the number of donations coming from a city and the size of the donations.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.height = 10, fig.width = 12}
+trans75 <- ggplot(ny.citycount, aes(log10(conteo),log10(seventy5))) +
+  geom_point(color = "light blue", alpha = 0.5, position = position_jitter()) +
+  labs(title = "Amount based on 75% percentile, transformed log10", 
+       y= "Max amount of 75% of donations --log10", 
+       x = "Donation count --log10")
+
+reg75 <- ggplot(ny.citycount, aes(conteo, seventy5)) +
+  geom_point(color = "light blue", alpha = 0.5, position = position_jitter()) +
+  labs(title = "Amount based on 75% percentile", 
+       y= "Max amount of 75% of donations", 
+       x = "Donation count")
+
+transmean <- ggplot(ny.citycount, aes(log10(conteo),log10(mean_amount))) +
+  geom_point(color = "light blue", alpha = 0.5, position = position_jitter()) +
+  labs(title = "Amount based on average, transformed log10", 
+       y= "Average amount --log10", 
+       x = "Donation count --log10")
+
+regmean <- ggplot(ny.citycount, aes(conteo, mean_amount)) +
+  geom_point(color = "light blue", alpha = 0.5, position = position_jitter()) +
+  labs(title = "Amount based on average", 
+       y= "Average amount", 
+       x = "Donation count")
+
+transm <- ggplot(ny.citycount, aes(log10(conteo),log10(max_amount))) +
+  geom_point(color = "light blue", alpha = 0.5, position = position_jitter()) +
+  labs(title = "Amount based on maximum value, transformed log10", 
+       y= "Max amount --log10", 
+       x = "Donation count --log10")
+
+regm <- ggplot(ny.citycount, aes(conteo, max_amount)) +
+  geom_point(color = "light blue", alpha = 0.5, position = position_jitter()) +
+  labs(title = "Amount based on maximum value", 
+       y= "Max amount", 
+       x = "Donation count")
+
+grid.arrange(reg75, trans75, regmean, transmean, regm, transm,
+             ncol = 2,top = "Cities: amount of donations by donation size")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Bar plot
+ny.citycount$city <- factor(ny.citycount$city, 
+            levels = ny.citycount$city[order(-ny.citycount$conteo)])
+
+ggplot(ny.citycount[1:20,], aes(city, conteo)) +
+  geom_col(fill = "light blue") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  labs(title = "Donation count by city, 30 cities with most donations ", 
+       x = 'City', y = 'Count of donations')
+
+ggplot(ny.citycount[1:20,], aes(city,mean_amount)) + 
+  geom_col(fill = "light blue")  +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  labs(x = 'City', y = 'Mean donation amount')
+
+ggplot(ny.citycount[1:20,], aes(city,seventy5)) + 
+  geom_col(fill = "light blue")  +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  labs(x = 'City', y = 'Max amount of 75% of donations')
+
+```
+
+By zip:
+Donation amounts come proportionally from all zips relative to the number of donations they are the source of.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12}
+# zip and county by candidate
+us<-map_data('state')
+us <- subset(us, region == "new york")
+
+ny.amount <- ny %>%
+  group_by(zip, amount_bucket, 
+           round(latitude_zip,5), round(longitude_zip,5)) %>%
+  summarise(count = n(), total = sum(amount))
+colnames(ny.amount)[3] = "latitude_zip"
+colnames(ny.amount)[4] = "longitude_zip"
+
+qtl_1 <- ggplot(subset(ny.amount, amount_bucket == "(0,15]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'purple', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "0-15 $", size = "Number of donations")
+
+qtl_2 <- ggplot(subset(ny.amount, amount_bucket == "(15,27]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'purple', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "15.01-27 $", size = "Number of donations")
+
+
+qtl_3 <- ggplot(subset(ny.amount, amount_bucket == "(27,100]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'purple', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "27.01-100 $", size = "Number of donations")
+
+qtl_4 <- ggplot(subset(ny.amount, amount_bucket == "(100,2.7e+03]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'purple', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "100.01 - 2700 $", size = "Number of donations")
+
+grid_arrange_shared_legend(qtl_1,qtl_2,qtl_3,qtl_4,ncol = 4, nrow = 1,
+                           top = "Donation amount bracket by zip code")
+
+rm(ny.amount)
+```
+
+#### Amount by zip by party
+
+Unexpectedly for me, there are no differences in the amount donated to each of the two major parties based on geography. Both republicans and democrats received larger sums from densely populated areas and smaller amounts from more rural ones.
+
+```{r, echo=FALSE, , message=FALSE, warning=FALSE, fig.align = "center"}
+# zip and county by candidate
+us<-map_data('state')
+us <- subset(us, region == "new york")
+
+# Republican
+ny.amountR <- subset(ny, party == "R") %>%
+  group_by(zip, amount_bucket, 
+           round(latitude_zip,5), round(longitude_zip,5), party) %>%
+  summarise(count = n(), total = sum(amount))
+colnames(ny.amountR)[3] = "latitude_zip"
+colnames(ny.amountR)[4] = "longitude_zip"
+
+qtl_1R <- ggplot(subset(ny.amountR, amount_bucket == "(0,15]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'red', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "0-15 $", size = "Number of donations")
+
+qtl_2R <- ggplot(subset(ny.amountR, amount_bucket == "(15,27]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'red', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "15.01-27 $", size = "Number of donations")
+
+
+qtl_3R <- ggplot(subset(ny.amountR, amount_bucket == "(27,100]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'red', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "27.01-100 $", size = "Number of donations")
+
+qtl_4R <- ggplot(subset(ny.amountR, amount_bucket == "(100,2.7e+03]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'red', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "100.01 - 2700 $", size = "Number of donations")
+
+rm(ny.amountR)
+
+# Democrats
+ny.amountD <- subset(ny, party == "D") %>%
+  group_by(zip, amount_bucket, 
+           round(latitude_zip,5), round(longitude_zip,5), party) %>%
+  summarise(count = n(), total = sum(amount))
+colnames(ny.amountD)[3] = "latitude_zip"
+colnames(ny.amountD)[4] = "longitude_zip"
+
+qtl_1D <- ggplot(subset(ny.amountD, amount_bucket == "(0,15]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'blue', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "0-15 $", size = "Number of donations")
+
+qtl_2D <- ggplot(subset(ny.amountD, amount_bucket == "(15,27]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'blue', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "15.01-27 $", size = "Number of donations")
+
+
+qtl_3D <- ggplot(subset(ny.amountD, amount_bucket == "(27,100]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'blue', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "27.01-100 $", size = "Number of donations")
+
+qtl_4D <- ggplot(subset(ny.amountD, amount_bucket == "(100,2.7e+03]"), aes(longitude_zip,latitude_zip)) +
+  geom_polygon(data=us,aes(x=long,y=lat,group=group),
+               color='light gray',fill=NA,alpha=.1)+
+  geom_point(aes(size = count),color = 'blue', alpha=.2) +
+  scale_size_area(limits = c(1,6000),
+                  breaks = c(500, 1000, 1500, 2000, 2500, 3000, 4000,6000)) +
+  theme_void() +
+  labs(title = "100.01 - 2700 $", size = "Number of donations")
+
+rm(ny.amountD)
+
+
+grid_arrange_shared_legend(qtl_1R,qtl_2R,qtl_3R,qtl_4R,
+                           qtl_1D,qtl_2D,qtl_3D,qtl_4D,  ncol = 4, nrow = 2,
+                           top = "Donation amount bracket by zip code")
+```
+
+#### Amount by county population
+
+The relationship between county population and donation size is tenuous.
+The following exploratory plots reveal no apparent trend between county population and either average or 75% percentile amount of donations received.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.height=13}
+ny.county <- ny %>%
+  group_by(county, population_county) %>%
+  summarise(count = n(), average = mean(amount), 
+            seventyfive_qtle = quantile(amount, .75))
+
+one <- ggplot(subset(ny.county, !is.na(ny.county$population_county)),
+       aes(population_county,average))+
+  geom_point(color = "light blue") +
+  labs(y = "Average amount $ donated", x = "County population")
+
+two <- ggplot(subset(ny.county, !is.na(ny.county$population_county)),
+       aes(population_county, seventyfive_qtle))+
+  geom_point(color = "light blue")+
+  labs(y = "75% percentile of amount $ donated", x = "County population")
+
+three <- ggplot(subset(ny.county, !is.na(ny.county$population_county)),
+       aes(log10(population_county),log10(average)))+
+  geom_point(color = "light blue") +
+  labs(y = "Average amount $ donated -log10", x = "County population - log10")
+
+four <- ggplot(subset(ny.county, !is.na(ny.county$population_county)),
+       aes(log10(population_county),log10(seventyfive_qtle)))+
+  geom_point(color = "light blue") +
+  labs(y = "75% percentile of amount $ donated -log10", x = "County population - log10")
+
+five <- ggplot(subset(ny.county, !is.na(ny.county$population_county)),
+       aes(sqrt(population_county),sqrt(average)))+
+  geom_point(color = "light blue") +
+  labs(y = "Average amount $ donated - sqrt", x = "County population - sqrt")
+
+
+six <-ggplot(subset(ny.county, !is.na(ny.county$population_county)),
+       aes(sqrt(population_county),sqrt(seventyfive_qtle)))+
+  geom_point(color = "light blue") +
+  labs(y = "75% percentile of amount $ donated -sqrt", x = "County population - sqrt")
+
+
+grid.arrange(one, two, three, four, five, six, ncol = 2,
+             top ="Relationship between donation amounts and county population")
+```
+
+It is important to remember that the population distribution is skewed,
+with most counties having smaller population sizes.
+
+However, when we examine the distribution of donation amount by population size bins, we see that, regardless of the size of the county, the distribution of the
+amount given per donation is very similar across all population sizes.
+
+The plots below represent population in bins of 100.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width=12}
+boxnorm <- ggplot(ny, aes(population_county_bucket, amount)) +
+  geom_boxplot(outlier.alpha = 0.1, outlier.size = .5, color = "light blue") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  theme(legend.position = "off") +
+  labs(y = "Donation amount $", x = "Population bins (100)")
+
+boxtrans <- ggplot(ny, aes(population_county_bucket, log10(amount))) +
+  geom_boxplot(outlier.alpha = 0.1, outlier.size = .5, color = "light blue") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(y = "Donation amount $ -- log10", x = "Population bins (100)")
+
+grid.arrange(boxnorm, boxtrans, ncol =2,
+                           top = "Donation amounts by county population")
+```
+
+#### Gender
+In this part I look at the interaction of gender with a number of other variables explored in the univariate section: party, candidate, time, and county population. Donation amount by gender was covered earlier (no effect).
+
+##### Gender by party
+Most donations to the Democratic party came from women
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+round(summary(subset(ny,party == "D")$gender)/
+        dim(subset(ny,party == "D"))[1]*100,2)
+```
+
+whereas most donations to the Republican party came from men.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+round(summary(subset(ny,party == "R")$gender)/
+        dim(subset(ny,party == "R"))[1]*100,2)
+```
+
+Both Green and Libertarian parties had most of their donations coming mostly from men.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+print('Libertarian')
+round(summary(subset(ny,party == "L")$gender)/
+        dim(subset(ny,party == "L"))[1]*100,2)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+print('Green')
+round(summary(subset(ny,party == "G")$gender)/
+        dim(subset(ny,party == "G"))[1]*100,2)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 8, fig.height = 6}
+ggplot(subset(ny, (gender == "female"|gender == "male")), aes(party, fill = gender)) +
+  geom_bar() +
+  scale_fill_manual("legend", values=c("female"="dark blue","male"= "purple")) +
+  scale_y_continuous(breaks = c(0, 200000, 400000), 
+                     labels = c("0", "200000", "400000")) +
+  labs(title = "Count of donations to each party, by gender", 
+       y = "Count of donations", x = "Party", fill = "Gender")
+
+```
+
+
+##### Gender by candidate
+
+For the major candidates of the Democratic party, Sanders received at least half of contributions from males, and likely less than that from females, although overall the proportion of each gender seems very similar. Clinton, on the other hand, received a greater number of donations from women than from men, and the difference is greater.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+print("Sanders:")
+round(summary(subset(ny,candidate == "Sanders")$gender)/
+        dim(subset(ny,candidate == "Sanders"))[1]*100,2)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+print("Clinton:")
+round(summary(subset(ny,candidate == "Clinton")$gender)/
+        dim(subset(ny,candidate == "Clinton"))[1]*100,2)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+
+dem <- subset(ny, party == "D" &  (gender == "female"|gender == "male"))
+
+ggplot(dem, aes(candidate, fill = gender)) +
+  geom_bar() +
+  scale_fill_manual("legend", values=c("female"="dark blue","male"= "purple")) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  scale_y_continuous(limits=c(0,400000), breaks = c(0, 200000, 400000), 
+                     label = c("0","200000","400000")) +
+    labs(title = "Democratic candidates")
+```
+
+
+Republican party candidates received a majority of their donations from men, across all candidates. This is the case unquestionably for the two leading candidates, Cruz and Trump.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+print("Cruz:")
+round(summary(subset(ny,candidate == "Cruz")$gender)/
+        dim(subset(ny,candidate == "Cruz"))[1]*100,2)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+print("Trump:")
+round(summary(subset(ny,candidate == "Trump")$gender)/
+        dim(subset(ny,candidate == "Trump"))[1]*100,2)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+
+rep <- subset(ny, party == "R" &  (gender == "female"|gender == "male"))
+
+ggplot(rep, aes(candidate, fill = gender)) +
+  geom_bar() +
+  scale_fill_manual("legend", values=c("female"="dark blue","male"= "purple")) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  scale_y_continuous(limits=c(0,35000), breaks = c(0, 35000), 
+                     label = c("0","35000")) +
+  labs(title = "Republican candidates")
+```
+
+For the candidates of the Libertarian and Green parties, males were also the main contributors. This despite the fact that the candidate for Green was a female.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+print("Stein:")
+round(summary(subset(ny,candidate == "Stein")$gender)/
+        dim(subset(ny,candidate == "Stein"))[1]*100,2)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+print("Johnson")
+round(summary(subset(ny,candidate == "Johnson")$gender)/
+        dim(subset(ny,candidate == "Johnson"))[1]*100,2)
+```
+
+We know that the gender distribution of the whole dataset is slightly more female than male. However, of all candidates, only Clinton received a majority of their contributions from females. This goes to show the magnitude by which Clinton outraised all other candidates.
+
+##### Gender over time
+
+Men seem to have gotten a head start in donations in 2015, but women donated more shortly after the start of 2016 and made a large difference as election day approached.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12, fig.height = 6}
+
+ggplot(subset(ny,(year == 15 | year == 16) &
+                (gender == "female"|gender == "male")), 
+       aes(time_point, colour = gender)) + 
+  geom_freqpoly(size = 1, binwidth = 10, alpha = .6) +
+  scale_color_manual("legend", 
+                     values=c("female"="dark blue","male"= "purple")) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election")) + 
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Donation counts from 1-1-15 to 12-31-16 by gender", 
+       color = "Gender", y= "Donations count", x = "Day")
+
+```
+
+##### Gender over time by party
+
+If we look at gender over time by party we find that the trend of the overall data is very similar to the data exclusively for the Democratic party, which is consistent with the fact that the majority of donations were to them.
+
+Another finding is that that females and males behave similarly within party lines, even if there are differences based on party.
+Most donations for democrats come from women, whereas most donations for republicans, greens, and libertarians come from men, yet both genders seem to follow a similar pattern in the rate of their donations within their party, except for donors to the Libertarian party.
+
+###### Democrats and Republicans
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.align = "center", fig.width = 12, fig.height = 6}
+ggplot(subset(ny,(year == 15 | year == 16) &
+                (gender == "female"|gender == "male") &
+                (party == "D" | party == "R")), 
+       aes(time_point, colour = gender, linetype = party)) + 
+  geom_freqpoly(size = 1, binwidth = 10, alpha = .6) +
+  scale_color_manual("legend", 
+                     values=c("female"="dark blue","male"= "purple")) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election")) + 
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Donation counts from 1-1-15 to 12-31-16 by gender and party: Democratic and Republican",
+       colour = "Gender", linetype = "Party",
+       y= "Donations count", x = "Day")
+```
+
+###### Greens and Libertarians
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.align = "center", fig.width = 12, fig.height = 6}
+ggplot(subset(ny,(year == 15 | year == 16) &
+                (gender == "female"|gender == "male") &
+                (party == "L" | party == "G")), 
+       aes(time_point, colour = gender, linetype = party)) + 
+  geom_freqpoly(size = 1, binwidth = 10, alpha = .6) +
+  scale_color_manual("legend", 
+                     values=c("female"="dark blue","male"= "purple")) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election")) + 
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Donation counts from 1-1-15 to 12-31-16 by gender and party: Green and Libertarian",
+       colour = "Gender", linetype = "Party",
+       y= "Donations count", x = "Day")
+```
+
+
+##### Amount over time by gender by party
+
+If we break down the number of donations over time by the amount of the donations, we see that the pattern persists.
+Males and females of each party tend do make donations of similar size, at the similar time, the only difference being that one gender donates more than the other.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.align = "center", fig.width = 13, fig.height = 6}
+
+femD <- ggplot(subset(ny,(year == 15 | year == 16) & gender =='female' &
+                       party == "D"), 
+              aes(time_point)) +
+  geom_area(aes(y = ..count.., fill = amount_bucket), 
+            stat = "bin", binwidth = 5) +
+  scale_fill_brewer(palette = "Blues",
+                    labels = c("0-15 $", "15.01-27 $",
+                               "27.01-100 $","100.01-27000 $")) +
+  scale_color_brewer(palette = "Blues") +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,
+                                sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15",
+                              "1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits=c(jan1_15,dec31_16)) +
+  scale_y_continuous(limits=c(0,15000)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Females Democrat", fill = "Amount quartiles", 
+       y= "Donations count", x = "Day")
+
+malD <- ggplot(subset(ny,(year == 15 | year == 16) & gender =='male' &
+                       party == "D"), 
+              aes(time_point)) +
+  geom_area(aes(y = ..count.., fill = amount_bucket), 
+            stat = "bin", binwidth = 5) +
+  scale_fill_brewer(palette = "Blues", 
+                    labels = c("0-15 $", "15.01-27 $",
+                               "27.01-100 $","100.01-27000 $")) +
+  scale_color_brewer(palette = "Blues") +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,
+                                sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15",
+                              "1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits=c(jan1_15,dec31_16)) +
+  scale_y_continuous(limits=c(0,15000)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Males Democrat", 
+       fill = "Amount quartiles", y= "Donations count", x = "Day")
+
+femR <- ggplot(subset(ny,(year == 15 | year == 16) & gender =='female' &
+                       party == "R"), 
+              aes(time_point)) +
+  geom_area(aes(y = ..count.., fill = amount_bucket), 
+            stat = "bin", binwidth = 5) +
+  scale_fill_brewer(palette = "Blues",
+                    labels = c("0-15 $", "15.01-27 $",
+                               "27.01-100 $","100.01-27000 $")) +
+  scale_color_brewer(palette = "Blues") +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,
+                                sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15",
+                              "1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits=c(jan1_15,dec31_16)) +
+  scale_y_continuous(limits=c(0,3000)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Females Republican", fill = "Amount quartiles", 
+       y= "Donations count", x = "Day")
+
+malR <- ggplot(subset(ny,(year == 15 | year == 16) & gender =='male' &
+                       party == "R"), 
+              aes(time_point)) +
+  geom_area(aes(y = ..count.., fill = amount_bucket), , 
+            stat = "bin", binwidth = 5) +
+  scale_fill_brewer(palette = "Blues", 
+                    labels = c("0-15 $", "15.01-27 $",
+                               "27.01-100 $","100.01-27000 $")) +
+  scale_color_brewer(palette = "Blues") +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,
+                                sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15",
+                              "1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits=c(jan1_15,dec31_16)) +
+  scale_y_continuous(limits=c(0,3000)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Males Republican", 
+       fill = "Amount quartiles", y= "Donations count", x = "Day")
+
+
+grid_arrange_shared_legend(femD, malD, femR, malR, nrow = 2,ncol=2,
+                           top = "Donation amounts from 1-1-15 to 12-31-16")
+
+```
+
+
+
+##### Gender by county population
+There does not seem to be a difference in the amount of donations based on the population size of the county where they originate.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center",fig.width=4, fig.height=6}
+ggplot(subset(ny,gender == "female" | gender == "male"), aes(gender, population_county)) +
+  geom_boxplot(color = c("dark blue", "purple")) +
+  labs(y = "County population", title = "County population by gender")
+
+```
+
+As most counties simply have an even proportion of male and female donors. There is greater variabily among smaller popualtion numbers, but that's unsurprising since there are more datapoints.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Get count of a gender per county
+ny.gendercounty <- subset(ny, gender == "female" | gender == "male")
+marker <- ifelse(ny.gendercounty$gender == "female", 1, 0)
+ny.gendercounty$marker <- marker
+
+ny.gendercounty <- ny.gendercounty %>%
+  group_by(county, population_county) %>%
+  summarise(n = n(), females = sum(marker))
+
+# Proportion of females of total donors of the county: 
+# 1 is all donors female, 0 is none
+ny.gendercounty$gender <- ny.gendercounty$females/ny.gendercounty$n
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+
+ggplot(ny.gendercounty, aes(gender, population_county)) +
+  geom_point(aes(colour = gender)) +
+  scale_x_continuous(limits = c(0,1),
+                     breaks = c(0, .5, 1),
+                     labels = c("All males", "Half of each gender", 
+                                "All females")) +
+  labs(title = "Proportion of donors female or male by county population",
+       x = "Gender proportion", y = "County population") +
+  theme(legend.position="none")
+
+```
+
+##### Gender by county
+
+Most counties have a roughly similar proportion of female and male donors. Some, though not all, of the less populated areas show a skew towards donors of either gender.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Getting county geometry
+ny.gendercounty <- left_join(ny.gendercounty, cty_ny, by = c("county"))
+
+# Map of donation counts by county
+ggplot(ny.gendercounty, aes(fill = gender)) +
+  geom_sf()+
+  scale_fill_continuous(limits = c(0,1),
+                        breaks = c(0,.5, 1),
+                        labels = c("All males", "Half of each gender", 
+                                   "All females") ) +
+  theme(legend.position = "right") +
+  labs(title = "Gender proportion of total donors per county", 
+       x = 'Longitude', y = 'Latitude', fill = "Gender proportion")
+```
+
+##### Party by county
+
+Most donations in the state were made to a candidate of the Democratic party. Despite this, we can see differences in some areas.
+
+The following maps show what proportion of the total contributions from that county went to each of the four parties.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+# Get count of a party per county
+ny.partycounty <- select(ny, party, county)
+ny.partycounty$rep <- ifelse(ny.partycounty$party == "R", 1, 0)
+ny.partycounty$dem <- ifelse(ny.partycounty$party == "D", 1, 0)
+ny.partycounty$lib <- ifelse(ny.partycounty$party == "L", 1, 0)
+ny.partycounty$gre <- ifelse(ny.partycounty$party == "G", 1, 0)
+
+ny.partycounty <- ny.partycounty %>%
+  group_by(county) %>%
+  summarise(n = n(), rep = sum(rep), dem = sum(dem), 
+            lib = sum(lib), gre = sum(gre))
+
+# Proportion of each party of total donors of the county: 
+# 1 is all donations went to that party, 0 is no donations
+ny.partycounty$rep <- ny.partycounty$rep/ny.partycounty$n
+ny.partycounty$dem <- ny.partycounty$dem/ny.partycounty$n
+ny.partycounty$lib <- ny.partycounty$lib/ny.partycounty$n
+ny.partycounty$gre <- ny.partycounty$gre/ny.partycounty$n
+
+# Getting county geometry
+ny.partycounty <- left_join(ny.partycounty, cty_ny, by = c("county"))
+
+# Maps of donation counts by county
+dem <- ggplot(ny.partycounty, aes(fill = dem)) +
+  geom_sf()+
+  scale_fill_continuous(limits = c(0,1),
+                        breaks = c(0,.5, 1),
+                        labels = c("None", "Half","All") ) +
+  theme(legend.position = "right") +
+  labs(title = "To Democratic party", 
+       x = NULL, y = NULL, fill = NULL) +
+  theme(axis.text.y = element_blank(), axis.text.x = element_blank())
+
+rep <- ggplot(ny.partycounty, aes(fill = rep)) +
+  geom_sf()+
+  scale_fill_continuous(limits = c(0,1),
+                        breaks = c(0,.5, 1),
+                        labels = c("None", "Half","All") ) +
+  theme(legend.position = "right") +
+  labs(title = "To Republican party", 
+       x = NULL, y = NULL, fill = NULL) +
+  theme(axis.text.y = element_blank(), axis.text.x = element_blank())
+
+gre <- ggplot(ny.partycounty, aes(fill = gre)) +
+  geom_sf()+
+  scale_fill_continuous(limits = c(0,1),
+                        breaks = c(0,.5, 1),
+                        labels = c("None", "Half","All") ) +
+  theme(legend.position = "right") +
+  labs(title = "To Green party", 
+       x = NULL, y = NULL, fill = NULL) +
+  theme(axis.text.y = element_blank(), axis.text.x = element_blank())
+
+lib <- ggplot(ny.partycounty, aes(fill = lib)) +
+  geom_sf()+
+  scale_fill_continuous(limits = c(0,1),
+                        breaks = c(0,.5, 1),
+                        labels = c("None", "Half","All") ) +
+  theme(legend.position = "right") +
+  labs(title = "To Libertarian party", 
+       x = NULL, y = NULL, fill = NULL) +
+  theme(axis.text.y = element_blank(), axis.text.x = element_blank())
+
+grid_arrange_shared_legend(dem, rep, lib, gre, nrow = 2,ncol=2,
+                      top = "Proportion of donations to each party, by county")
+
+```
+
+The bar plot below displays the same content, with counties sorted by count of donations.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width=12}
+ggplot(subset(ny, !is.na(county)), aes(fct_infreq(county))) +
+  geom_bar(aes(fill = party)) +
+  scale_fill_manual(values=c("blue", "green", "black", "red")) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Party donations by county", y = "Count", x = "Counties") +
+  theme(plot.title = element_text(size = rel(1)))
+```
+
+Being the source of the most donations to a party does not mean that most of the county donations were to that party. As is the case with the county New York, home to the largest number of donations to all parties, it does not lead any party in share of donations.
+
+When we look at the share of donations we can see some interesting patterns, such as that Tompkins county has the second greatest share of its donations going to the Democratic party.
+
+###### Democratic party
+
+When we look at the share of donations we can see some interesting patterns, such as that Tompkins county has the second greatest share of its donations going to the Democratic party, even though it trails in actual number of donations.
+Also, counties with 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12}
+
+ggplot(subset(ny.partycounty, !is.na(county)), 
+       aes(x = reorder(county, -dem), y = dem)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Share of donations to Democratic party by county", 
+       y = "Share of county's donations", x = "Counties") +
+  theme(plot.title = element_text(size = rel(1)))
+
+ggplot(subset(ny, !is.na(county) & party == "D"), aes(fct_infreq(county))) +
+  geom_bar(fill = "blue") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Number of donations to Democratic party by county", 
+       y = "Count of donations", x = "Counties") +
+  theme(plot.title = element_text(size = rel(1)))
+
+
+```
+
+###### Republican party
+
+Even though New York was home to the largest number of donations to the Republican party, it was the third-to-last county in share of donations of its total.
+More rural counties were home to fewer donations to the Republican party, but they were home to fewer donations in general, so their leaning is revealed when we look at share of donations.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12}
+
+ggplot(subset(ny.partycounty, !is.na(county)), 
+       aes(x = reorder(county, -rep), y = rep)) +
+  geom_bar(stat = "identity", fill = "red") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Share of donations to Republican party by county", 
+       y = "Share of county's donations", x = "Counties") +
+  theme(plot.title = element_text(size = rel(1)))
+
+ggplot(subset(ny, !is.na(county) & party == "R"), aes(fct_infreq(county))) +
+  geom_bar(fill = "red") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Number of donations to Republican party by county", 
+       y = "Count of donations", x = "Counties") +
+  theme(plot.title = element_text(size = rel(1)))
+
+
+```
+
+###### Libertarian and Green parties
+
+There were counties from which no donations were made to the Libertarian or the Green party, and the share they make in those counties in which their contributors reside is very small.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12}
+
+ggplot(subset(ny.partycounty, !is.na(county)), 
+       aes(x = reorder(county, -lib), y = lib)) +
+  geom_bar(stat = "identity", fill = "black") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Share of donations to Libertarian party by county", 
+       y = "Share of county's donations", x = "Counties") +
+  theme(plot.title = element_text(size = rel(1)))
+
+ggplot(subset(ny, !is.na(county) & party == "L"), aes(fct_infreq(county))) +
+  geom_bar(fill = "black") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Number of donations to Libertarian party by county", 
+       y = "Count of donations", x = "Counties") +
+  theme(plot.title = element_text(size = rel(1)))
+
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12}
+
+ggplot(subset(ny.partycounty, !is.na(county)), 
+       aes(x = reorder(county, -gre), y = gre)) +
+  geom_bar(stat = "identity", fill = "green") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Share of donations to Green party by county", 
+       y = "Share of county's donations", x = "Counties") +
+  theme(plot.title = element_text(size = rel(1)))
+
+ggplot(subset(ny, !is.na(county) & party == "G"), aes(fct_infreq(county))) +
+  geom_bar(fill = "green") +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(title = "Number of donations to Green party by county", 
+       y = "Count of donations", x = "Counties") +
+  theme(plot.title = element_text(size = rel(1)))
+```
+
+
+#### Candidate by party
+
+The exploration of single donation amount per candidate enriches the earlier findings of the distinction by party. Within the Democratic and Republican party, candidates varied in what proportion of their contributions were small or large. Green and Libertarian contributions were directed towards a single candidate for each party.
+
+For example, 75% of donations to the Democratic Party were 90$ or less. While 75% of donations to the frontrunners Sanders and Clinton were up to $50 and $100 respectively; for the other three candidates 75% of their donations were up to $1000. However, these other candidates made for less than .0001% of total donations, which explains their negligible impact on the stats of the party.
+
+Summary of donation size for minor Democratic candidates.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+summary(subset(ny, party == "D" & candidate != "Sanders" & candidate != "Clinton")$amount)
+```
+
+Percentage taken by minor Democratic candidates.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+dim(subset(ny, party == "D" & candidate != "Sanders" & candidate != "Clinton"))[1]/
+  dim(subset(ny, party == "D"))[1]
+```
+
+Contributions to Clinton and Sanders made up over 99.92% of all contributions in NY.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+round(((dim(subset(ny, candidate == "Clinton" | candidate == "Sanders"))[1])/
+  (dim(subset(ny, party == "D"))[1])),4)*100
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 5}
+ggplot(subset(ny, party == "D"), aes(x = candidate)) +
+ geom_bar(color = "light blue", fill = "light blue") +
+ theme(axis.text.x=element_text(angle=90,hjust=1))
+
+```
+
+
+For the Republican party, 75% of donations were $150 or less.
+While the most contributed-to candidates, Trump and Cruz, received 75% of 
+donations up to $160 and $100 respectively; for the other 16 candidates 75% of 
+donations were up to $500. These other 16 candidates, however, make up 26% of 
+the contributions the Republican Party received in NY.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+summary(subset(ny, party == "R" & candidate != "Trump" & candidate != "Cruz")$amount)
+```
+
+Percentage of minor Republican candidates.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+dim(subset(ny, party == "R" & candidate != "Trump" & candidate != "Cruz"))[1]/
+  dim(subset(ny,party == "R"))[1]
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center"}
+ggplot(subset(ny, party == "R"), aes(x = candidate)) +
+ geom_bar(color = "light blue", fill = "light blue") +
+ theme(axis.text.x=element_text(angle=90,hjust=1))
+```
+
+## Bivariate analysis
+
+Revealing from this section is that top candidates received greater number of donations but also tended to get them in smaller sizes. This is generally true of all candidates, but especially of the ones from the Democratic party.
+
+It was also interesting to find that males rather than females were the larger source of contributions to all candidates except Clinton, including Stein, since overall females are more represented in the whole dataset than males. This showcases the magnitude of the contributions to Clinton in the state.
+
+Also in relation to gender, it was surprising to find a difference in behavior over time, with women donating more than men as the election approached.
+
+There were other patterns that simply confirmed suspicions and national trends. For national trends we can see the breakdown of candidates by party, and the share of donations taken by each. For suspiciions we have the fact that donations sped up as the election approached, and that highly populated areas, or collegetowns, were the source of more donations. Donation size did not seem to change much through either. It will be interesting to see whether party has any effect on this.  
+
+#### Bivariate analysis summary
+
+One of the most significant findings of the dataset was that candidates that raised the most also tended to receive the smallest donations. The correlation between donation amount total raised was true of all parties and candidates. However, differences persist. The top candidates from the republicans: Trump and Cruz, received fewer and heavier donations than the top Democratic candidates: Sanders and Clinton.
+
+There were also many candidates of all parties who received very large donations. Early donations were larger, and are associated with minor candidates. Libertarian and Green candidates receive large single donations. 
+The fact that the data overall shows a tendency to small donations owes to the dominance of the Democratic party, and specifically Clinton, in the individual donations in the state of New York.
+
+As per the candidates who received 10 000 donations or more, three out of four donations given to Sanders were 50 dollars or less, to Clinton and Cruz 100 or less, and to Trump 160 or less.
+
+Very early on, there are few donations though often large. As 2016 progressed, smaller amounts began to make up a larger share of all donations. Donations to the Democratic candidate showed a peculiar surge at the end of the month.
+
+
+
+Most donations to the Democratic party came from women, whereas most donations to the Republican, Libertarian, and Green parties came from men.
+
+Only one candidate unquestionably received most donations from females, Clinton. Sanders received at least half of contributions from males, although the ratio is close. The two leading candidates of the Republican party, Cruz and Trump, received a majority of their donations from men, and this was the case for all other candidates. Since the gender distribution of the whole dataset is slightly more female than male, and only Clinton received most of her contributions from females, this shows the outsized effect she had on campaign donations in New York state.
+
+Another finding is that, both in number of donations and their amount, females and males behave similarly within party lines, and different from the males and females of other parties. The only difference is that within parties, one gender may donate more than the other, yet their behavior mimics each other.
+Lastly, while the state overall contributed mostly to the Democratic party and in particular to Clinton, areas with a greater percentage of contributions to the Republican party were mostly upstate and rural.
+
+***
+* Dead-ends
+
+There is no obvious relationship between any of the geography variables and the size of donations, and the distribution of the gender of donors also seems uniform across all regions. This was the case regardless of the size of the county population.
+
+There is no significant difference in the amount contributed in a single donation, or in total by females or males, nor is there a difference in trends over time – quite the opposite, they pattern together.
+
+
+## Multivariate analysis, selected plots
+
+#### Candidates who raised most did so through many donations of small size
+
+The most interesting finding of this exploration is the positive correlation between total amount raised and number of donations received, and the negative correlation of total amount raised and donation size.
+In times when people express hopelessness about individuals of regular having any power over an electoral process with many rich donors, this finding can be very refreshing. The limitations of this analysis of course, is that it only looks at donations from people, which is important to keep in mind.
+
+Those candidates that received the biggest total of money, also received the smaller donations in general. There was a negative correlation between the total money received and log10 of the 75th percentile of the donations' amount: r=-.33, p=.10, which becomes more significant if we log10 transformed total money received:r=-.41, p=0.04. In summary: the more total money a candidate raised, the smaller the donations they received tended to be.
+
+What offsets this is the fact that these candidates received also many more donations, even if small, than those whose donors gave them more money per donations. There was a negative correlation between the count of donations received and the 75th percentile of the donations' amount: r=-.44, p=.03, and with count of donations log10 transformed the strength and significance of the correlation increase:r=-.68, p<0.001. The larger the count of donations received, the smaller they tended to be.
+
+The edificant conclusion is that there were so many small donations that they were enough to be positively correlated with total amount raised. There is a strong positive correlation between total amount raised and the count of donations:
+r=.95, p<0.001; and if we log10 transformed these variables, the relationship still holds: r=0.94, p<0.001.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, correlations}
+total_count <- cor.test(ny.candidate$total_dollars,
+                              ny.candidate$count, method = "pearson")
+total_size <- cor.test(ny.candidate$total_dollars,
+         log10(ny.candidate$seventyfive_qtle), method = "pearson")
+count_size <- cor.test(ny.candidate$count,
+         log10(ny.candidate$seventyfive_qtle), method = "pearson")
+
+total_count_Log <- cor.test(log10(ny.candidate$total_dollars),
+                        log10(ny.candidate$count), method = "pearson")
+total_size_Log <- cor.test(log10(ny.candidate$total_dollars),
+                log10(ny.candidate$seventyfive_qtle), method = "pearson")
+count_size_Log <- cor.test(log10(ny.candidate$count),
+                       log10(ny.candidate$seventyfive_qtle), method = "pearson")
+```
+
+For that finding, I think two plots are crucial.
+
+First, with candidates ranked according to total money raised and names clearly indicated on the x axis, we can see the relationships mentioned.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12, fig.height = 8}
+ggplot(ny.candidate, aes(reorder(candidate, log10(count), order=TRUE), 
+                         log10(total_dollars), 
+                         colour = log10(count), size = log10(seventyfive_qtle))) +
+  geom_point() +
+  labs(title = "Total raised by candidate, by donations 75% percentile amount, by number of donations received", 
+         y = "Total raised - log10", x = "Candidates",
+       size = "Maximum amount of 75% of donations - log10", 
+       colour = "Count of donations received - log10") +
+  theme(plot.title = element_text(size = rel(1))) +
+  theme(axis.text.x=element_text(angle=90,hjust=1))
+```
+
+The next plot conveys the same information, plus party. I think it is very important to note that the pattern observed applies regardless of party affiliation.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.width = 12, fig.height = 8}
+ggplot(ny.candidate, aes(log10(count), log10(total_dollars)+.15)) +
+  geom_point(aes(log10(count), log10(total_dollars), 
+                         colour = party, size = log10(seventyfive_qtle))
+             , alpha =.7) +
+  geom_text(label = ny.candidate$candidate, color = 'dark grey') +
+  scale_color_manual(values=c("blue", "green", "black", "red")) +
+  labs(title = "Total raised by number of donations received -- in log 10", 
+         x = "Donations received -log10", y = "Total raised -log10",
+       party = NULL, size = "Maximum amount of 75% of donations - log10")
+```
+
+#### Party lines more important than gender lines
+
+Another important finding is that donors pattern along party lines rather than along gender. Most donations for democrats come from women, whereas most donations for republicans, greens, and libertarians come from men; yet for all parties both genders follow a similar pattern of donations over time.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align = "center", fig.align = "center", fig.width = 12, fig.height = 6}
+ggplot(subset(ny,(year == 15 | year == 16) &
+                (gender == "female"|gender == "male") &
+                (party == "D" | party == "R")), 
+       aes(time_point, colour = gender, linetype = party)) + 
+  geom_freqpoly(size = 1, binwith = 10, alpha = .6) +
+  scale_color_manual("legend", 
+                     values=c("female"="dark blue","male"= "purple")) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election")) + 
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Donation counts from 1-1-15 to 12-31-16 by gender and party: Democratic and Republican",
+       colour = "Gender", linetype = "Party",
+       y= "Donations count", x = "Day")
+```
+
+
+#### Donation amount and donation count over time, by party
+
+Another important finding was the differences in the number of donations and their amount received by each party over time. While overall candidates from the Democratic party received more donations and of smaller size, the opposite was true of candidates from the Republican party. The following plot conveys these differences, as well as time-dependent differences.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width = 12,fig.height = 8, fig.align = "center", fig.align = "center"}
+
+
+dem <- ggplot(subset(ny,(year == 15 | year == 16) & party =='D'), 
+              aes(time_point)) +
+  geom_area(aes(y = ..count.., fill = amount_bucket), 
+            stat = "bin", binwidth = 5) +
+  scale_fill_brewer(palette = "Blues",
+                    labels = c("0-15 $", "15.01-27 $",
+                               "27.01-100 $","100.01-27000 $")) +
+  scale_color_brewer(palette = "Blues") +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits=c(jan1_15,dec31_16)) +
+  scale_y_continuous(limits=c(0,30000)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Democrats", fill = "Amount quartiles", 
+       y= "Donations count", x = "Day")
+
+rep <- ggplot(subset(ny,(year == 15 | year == 16) & party =='R'), 
+              aes(time_point)) +
+  geom_area(aes(y = ..count.., fill = amount_bucket), 
+            stat = "bin", binwidth = 5) +
+  scale_fill_brewer(palette = "Blues", 
+                    labels = c("0-15 $", "15.01-27 $",
+                               "27.01-100 $","100.01-27000 $")) +
+  scale_color_brewer(palette = "Blues") +
+  theme(plot.title = element_text(size = rel(1))) +
+  scale_x_continuous(breaks = c(jan1_15, dec31_15,jul21_16,
+                                jul28_16,sep16_16,oct4_16, oct14_16,
+                                nov6_16 ), 
+                    label = c("Jan 1 2015", "Dec 31 15","Rep Convention",
+                              "Dem Convention","1 Debate","2 Debate","3 Debate",
+                               "Election"),
+                    limits=c(jan1_15,dec31_16)) +
+  scale_y_continuous(limits=c(0,5000)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  labs(title = "Republicans", 
+       fill = "Amount quartiles", y= "Donations count", x = "Day")
+
+grid_arrange_shared_legend(dem, rep, nrow = 2,ncol=1,
+                           top = "Donation amounts from 1-1-15 to 12-31-16")
+```
+
+## Reflection
+
+I wanted to trust my data so much that the data wrangling process became its own separate, necessary first project. A whole project on itself. I initially set out to work on the original dataset with the idea of getting it out of the way so that I could focus on the data from my own academic pursuits, and perhaps have two of these ready by the end of the unit. I did not expect the data wrangling effor to take so much time, and it has been almost as much effort as it takes me when I am dealing with "my own" data. Also, I ended up creating more variables than I ended up using. Which brings me to a crucial point. Lack of a clear question, and an open ended exploratory field, can be a very tricky terrain to navigate, especially when one has planned to cover so many places and the goal being the exploration itself.
+
+In the data wrangling process, I learned a lot in terms of modifying R datasets and using regular expressions. But importantly, it became a necessary part of the data exploration process, as for a while I kept uncovering issues with and needed to go back and correct the dataset.
+I had a very ambitious plan with many interesting variables, but the long time mining them at times bordered on the discouraging. The need to pre-assess the scope of a project is definitely something that I have learned in this project.
+
+I often ran into problems when trying to tweak the specifics of a graphic. As usual, this became more pronounced if I hadn't touched the project in several days. The many people answering questions and providing examples throughout the internet have helped me a lot. I have gained confidence, but also appreciation of much more to learn.
+
+There are several areas for future work. One is the variables that I created that did not use in this analysis, such as the use of titles. Another is further modeling, something probably involving time series to try to uncover any changes over time. Finally, there are yet other variables that could be added to the dataset, such as day of the week.
+
