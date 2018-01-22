@@ -1,1 +1,14 @@
-campaign_contrib-NY_modified_USED_FOR_ANALYSIS.csv
+# Ignore everything
+*
+
+# But not these files...
+!.gitignore
+!project_final.Rmd
+!project_final.html
+!project_dataset_preparation.Rmd
+# etc...
+
+# ...even if they are in subdirectories
+#!*/
+
+# https://stackoverflow.com/questions/987142/make-gitignore-ignore-everything-except-a-few-files

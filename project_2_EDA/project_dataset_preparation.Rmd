@@ -1,0 +1,1093 @@
+---
+title: "project_dataset_preparation"
+output: html_document
+---
+
+This piece preparaes the dataset used for the analysis in "project.rmd"
+It takes an hour to run fully.
+
+### Problems with original dataset
+
+### Solutions
+
+### New variables created
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load all of the packages that you end up using in your analysis in this code
+# chunk.
+
+# Notice that the parameter "echo" was set to FALSE for this code chunk. This
+# prevents the code from displaying in the knitted HTML output. You should set
+# echo=FALSE for all code chunks in your file, unless it makes sense for your
+# report to show the code that generated a particular plot.
+
+# The other parameters for "message" and "warning" should also be set to FALSE
+# for other code chunks once you have verified that each plot comes out as you
+# want it to. This will clean up the flow of your report.
+
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(gender)
+library(genderdata)
+library(lettercase)
+library(zipcode)
+library(noncensus)
+library(stringr)
+library(purrr)
+library(albersusa)#installed via github (devtools::install_github("hrbrmstr/albersusa"))
+library(gridExtra)
+library(viridis)
+library(ggthemes)
+```
+
+```{r echo=FALSE, Load_the_Data}
+# Load the Data
+ny <- read.csv('/Users/amui/Dropbox/learn/Data_Analyst_nanodegree/project_2_EDA_Exploratory_Data_Analysis/campaign_contrib-NY.csv', row.names=NULL)
+
+setwd('/Users/amui/Dropbox/learn/Data_Analyst_nanodegree/project_2_EDA_Exploratory_Data_Analysis/')
+
+```
+
+Create a backup of the original dataset
+```{r echo=FALSE, Create_a_backup_copy_of_the_original_dataset}
+old_ny <- ny
+```
+
+The goal is to separate the column contbr_nm into first name and last name.
+However, since this data was entered manually by users, there's reason to suspect
+that usage of separators might not be as consistent, as say, a standard
+timestamp logged by a function in a computer program.
+This suspicion bears out, as there were 108 cases with more than one coma, 
+and 100 cases without a coma.
+Turns out, there are several other issues with the full name as entered by users manually.
+This chunk of code assess and cleans problems with the column contbr_nm, and tests the cleaning.
+The end goal is to have contbr_nm entries that are valid (good data), and that have a single coma which comes after the last name.
+```{r echo=FALSE, Cleaning_up_contbr_nm_column}
+
+# *******************
+# Create a function to detect names that do not meet my specifications.
+check <- function(){
+# Detect any string that is not a single word or two words
+# - word can contain a hyphen or a ' after the first letter
+# - there's a coma, a space, a coma and a space, a space and a coma, a space a coma and a space, between words
+# - does not contain the word FAMILY  
+indices = which(!(str_detect(ny$contbr_nm,'^((\\w+)|(\\w+\\-\\w+)|(\\w{1}\'\\w+)|(\\w+\\s\\w+))(\\s+|\\,\\s+|\\,|\\s+\\,|\\s+\\,\\s+)(((\\w+)|(\\w+\\-\\w+)|(\\w+\\s\\w+)){1,2}|$)$')))
+ny$contbr_nm[indices]
+
+    ## There are many cases that contain FAMILY
+    family_indices <- which(str_detect(ny$contbr_nm, 'FAMILY'))
+    ny$contbr_nm[family_indices]
+
+# So, check for those cases that do not have the format specified and do not
+# contain FAMILY in them. If they do, I do not care, since I cannot use the name
+# for determining the gender.    
+check_indices <- indices[which(!(indices %in% family_indices))]   
+ny$contbr_nm[check_indices]  
+  
+return(ny$contbr_nm[check_indices])
+}
+# *******************
+
+# *******************
+# Create a function to adjust whitespace
+spaceadjust <- function(ny){
+  # Remove trailing or ending white space
+  ny$contbr_nm <- str_replace(ny$contbr_nm,('(^\\s+)|(\\s+$)'),'')
+  
+  # Double white space to single white space
+  ny$contbr_nm <- str_replace(ny$contbr_nm,('(\\s{2,})'),' ')
+  
+  return(ny)
+}
+# *******************
+
+# *******************
+# Create a function to extract comas at beggining of string, at the end of 
+# string if there is more than one coma, and double comas
+comasadjust <- function(ny){
+  # Double comas
+  ny$contbr_nm[which(str_detect(ny$contbr_nm, '\\,+\\s*\\,+'))]
+  ny$contbr_nm <- str_replace(ny$contbr_nm, '\\,+\\s*\\,+', ',')
+
+  # Comas at start or end of string
+  ny$contbr_nm[which(str_detect(ny$contbr_nm, '^[[:punct:]]'))]
+  ny$contbr_nm <- str_replace(ny$contbr_nm, '^[[:punct:]]', '')
+  
+  # Comas at end of string if there is more than one coma
+  comas <- str_count(ny$contbr_nm, ',')
+  indices <- which(comas > 1)
+  ny$contbr_nm[indices]
+  ny$contbr_nm[indices] <- str_replace(ny$contbr_nm[indices],"\\,$","")
+  ny$contbr_nm[indices]
+
+  str_detect(ny$contbr_nm[comas > 1], "\\,$")
+  
+  return(ny)
+}
+# *******************
+
+# *******************
+# Create a function to extract periods at beggining and end of 
+# string, and double periods
+periodsadjust <- function(ny){
+  # Double periods
+  ny$contbr_nm[which(str_detect(ny$contbr_nm, '\\.+\\s*\\.+'))]
+  ny$contbr_nm <- str_replace(ny$contbr_nm, '\\.+\\s*\\.+', ',')
+
+  # Periods at start or end of string
+  ny$contbr_nm[which(str_detect(ny$contbr_nm, '^[[:punct:]]'))]
+  ny$contbr_nm <- str_replace(ny$contbr_nm, '^[[:punct:]]', '')
+  
+  # Periods at end of string
+  ny$contbr_nm[which(str_detect(ny$contbr_nm, '\\.$'))]
+  ny$contbr_nm <- str_replace(ny$contbr_nm, '\\.$', '')
+
+  return(ny)
+}
+# *******************
+
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+# Remove odd signs
+ny$contbr_nm[which(str_detect(ny$contbr_nm,('\\\\+|\`+|\\?+')))]
+ny$contbr_nm <- str_replace_all(ny$contbr_nm, "D`ONOFRIO, DAVID","D'ONOFRIO, DAVID")
+ny$contbr_nm <- str_replace_all(ny$contbr_nm,('\\\\+|\`+|\\?+'),'')
+ny$contbr_nm[which(str_detect(ny$contbr_nm,('\\\\+|\`+|\\?+')))]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+# Extract title: save it in ny$title and delete it from ny$contbr_nm
+ny$title_1 <- str_extract(ny$contbr_nm,('((\\s|[[:punct:]]|\\b|^)(RN|R\\.N|MD|M\\.D|LCSW|L\\.C\\.S\\.W|ESQ|E\\.S\\.Q|PHD|PH\\.D|CPC|C\\.P\\.C|CLC|C\\.L\\.C|CPM|C\\.P\\.M|PE|P\\.E|DVM|D\\.V\\.M|BSN|B\\.S\\.N|CDR|C\\.D\\.R|MACP|M\\.A\\.C\\.P|MS|MRS|MR|MISS|SR|JR|III|IV|II|CCM|C\\.C\\.M|ONC|O\\.N\\.C|RET|R\\.E\\.T|CCM|C\\.C\\.M|DR|D\\.R|BBA|B\\.B\\.A|MA|M\\.A|ED|E\\.D|MSGT\\.|S\\.A\\.F\\.|USAF|U\\.S\\.A\\.F\\.|ARMY|COL\\.\\sUSMC|CAPT|USN|USNR|REV|TSGT|SSGT|USMC|HON|PSTR\\.|MAJ\\.)(\\s|[[:punct:]]|\\b|$))'))
+
+ny$contbr_nm <- str_replace(ny$contbr_nm,('((\\s|[[:punct:]]|\\b|^)(RN|R\\.N|MD|M\\.D|LCSW|L\\.C\\.S\\.W|ESQ|E\\.S\\.Q|PHD|PH\\.D|CPC|C\\.P\\.C|CLC|C\\.L\\.C|CPM|C\\.P\\.M|PE|P\\.E|DVM|D\\.V\\.M|BSN|B\\.S\\.N|CDR|C\\.D\\.R|MACP|M\\.A\\.C\\.P|MS|MRS|MR|MISS|SR|JR|III|IV|II|CCM|C\\.C\\.M|ONC|O\\.N\\.C|RET|R\\.E\\.T|CCM|C\\.C\\.M|DR|D\\.R|BBA|B\\.B\\.A|MA|M\\.A|ED|E\\.D|MSGT\\.|S\\.A\\.F\\.|USAF|U\\.S\\.A\\.F\\.|ARMY|COL\\.\\sUSMC|CAPT|USN|USNR|REV|TSGT|SSGT|USMC|HON|PSTR\\.|MAJ\\.)(\\s|[[:punct:]]|\\b|$))'),
+                  '')
+
+ny$title_2 <- str_extract(ny$contbr_nm,('((\\s|[[:punct:]]|\\b|^)(RN|R\\.N|MD|M\\.D|LCSW|L\\.C\\.S\\.W|ESQ|E\\.S\\.Q|PHD|PH\\.D|CPC|C\\.P\\.C|CLC|C\\.L\\.C|CPM|C\\.P\\.M|PE|P\\.E|DVM|D\\.V\\.M|BSN|B\\.S\\.N|CDR|C\\.D\\.R|MACP|M\\.A\\.C\\.P|MS|MRS|MR|MISS|SR|JR|III|IV|II|CCM|C\\.C\\.M|ONC|O\\.N\\.C|RET|R\\.E\\.T|CCM|C\\.C\\.M|DR|D\\.R|BBA|B\\.B\\.A|MA|M\\.A|ED|E\\.D|MSGT\\.|S\\.A\\.F\\.|USAF|U\\.S\\.A\\.F\\.|ARMY|COL\\.\\sUSMC|CAPT|USN|USNR|REV|TSGT|SSGT|USMC|HON|PSTR\\.|MAJ\\.)(\\s|[[:punct:]]|\\b|$))'))
+
+ny$contbr_nm <- str_replace(ny$contbr_nm,('((\\s|[[:punct:]]|\\b|^)(RN|R\\.N|MD|M\\.D|LCSW|L\\.C\\.S\\.W|ESQ|E\\.S\\.Q|PHD|PH\\.D|CPC|C\\.P\\.C|CLC|C\\.L\\.C|CPM|C\\.P\\.M|PE|P\\.E|DVM|D\\.V\\.M|BSN|B\\.S\\.N|CDR|C\\.D\\.R|MACP|M\\.A\\.C\\.P|MS|MRS|MR|MISS|SR|JR|III|IV|II|CCM|C\\.C\\.M|ONC|O\\.N\\.C|RET|R\\.E\\.T|CCM|C\\.C\\.M|DR|D\\.R|BBA|B\\.B\\.A|MA|M\\.A|ED|E\\.D|MSGT\\.|S\\.A\\.F\\.|USAF|U\\.S\\.A\\.F\\.|ARMY|COL\\.\\sUSMC|CAPT|USN|USNR|REV|TSGT|SSGT|USMC|HON|PSTR\\.|MAJ\\.)(\\s|[[:punct:]]|\\b|$))'),
+                  '')
+
+ny$title_3 <- str_extract(ny$contbr_nm,('((\\s|[[:punct:]]|\\b|^)(RN|R\\.N|MD|M\\.D|LCSW|L\\.C\\.S\\.W|ESQ|E\\.S\\.Q|PHD|PH\\.D|CPC|C\\.P\\.C|CLC|C\\.L\\.C|CPM|C\\.P\\.M|PE|P\\.E|DVM|D\\.V\\.M|BSN|B\\.S\\.N|CDR|C\\.D\\.R|MACP|M\\.A\\.C\\.P|MS|MRS|MR|MISS|SR|JR|III|IV|II|CCM|C\\.C\\.M|ONC|O\\.N\\.C|RET|R\\.E\\.T|CCM|C\\.C\\.M|DR|D\\.R|BBA|B\\.B\\.A|MA|M\\.A|ED|E\\.D|MSGT\\.|S\\.A\\.F\\.|USAF|U\\.S\\.A\\.F\\.|ARMY|COL\\.\\sUSMC|CAPT|USN|USNR|REV|TSGT|SSGT|USMC|HON|PSTR\\.|MAJ\\.)(\\s|[[:punct:]]|\\b|$))'))
+
+ny$contbr_nm <- str_replace(ny$contbr_nm,('((\\s|[[:punct:]]|\\b|^)(RN|R\\.N|MD|M\\.D|LCSW|L\\.C\\.S\\.W|ESQ|E\\.S\\.Q|PHD|PH\\.D|CPC|C\\.P\\.C|CLC|C\\.L\\.C|CPM|C\\.P\\.M|PE|P\\.E|DVM|D\\.V\\.M|BSN|B\\.S\\.N|CDR|C\\.D\\.R|MACP|M\\.A\\.C\\.P|MS|MRS|MR|MISS|SR|JR|III|IV|II|CCM|C\\.C\\.M|ONC|O\\.N\\.C|RET|R\\.E\\.T|CCM|C\\.C\\.M|DR|D\\.R|BBA|B\\.B\\.A|MA|M\\.A|ED|E\\.D|MSGT\\.|S\\.A\\.F\\.|USAF|U\\.S\\.A\\.F\\.|ARMY|COL\\.\\sUSMC|CAPT|USN|USNR|REV|TSGT|SSGT|USMC|HON|PSTR\\.|MAJ\\.)(\\s|[[:punct:]]|\\b|$))'),
+                  '')
+
+# Clean up titles columns of spaces and punctuation
+ny$title_1 <- str_replace_all(ny$title_1, '[[:punct:]]','')
+ny$title_1 <- str_trim(ny$title_1)
+
+ny$title_2 <- str_replace_all(ny$title_2, '[[:punct:]]','')
+ny$title_2 <- str_trim(ny$title_2)
+
+ny$title_3 <- str_replace_all(ny$title_3, '[[:punct:]]','')
+ny$title_3 <- str_trim(ny$title_3)
+
+# Extract initials : save it in ny$initials and delete it from ny$contbr_nm
+ny$initials_1 <- str_extract(ny$contbr_nm,'((?<!^)(\\s|[[:punct:]]|\\b)([[:alpha:]]{2}|[[:alpha:]]{1})(\\s|[[:punct:]]|\\b|$))')
+
+ny$contbr_nm <- str_replace(ny$contbr_nm,'((?<!^)(\\s|[[:punct:]]|\\b)([[:alpha:]]{2}|[[:alpha:]]{1})(\\s|[[:punct:]]|\\b|$))','')
+
+ny$initials_2 <- str_extract(ny$contbr_nm,'((?<!^)(\\s|[[:punct:]]|\\b)([[:alpha:]]{2}|[[:alpha:]]{1})(\\s|[[:punct:]]|\\b|$))')
+
+ny$contbr_nm <- str_replace(ny$contbr_nm,'((?<!^)(\\s|[[:punct:]]|\\b)([[:alpha:]]{2}|[[:alpha:]]{1})(\\s|[[:punct:]]|\\b|$))','')
+
+# Extract anything ending in LLC or LLP-- "TURCONORTH LLC" "MARONEYCONNOR LLP"
+indices <- which(str_detect(ny$contbr_nm,('LLC$|LLP$|FUND$|PAC$|CORP$|LTD$|INC$|COMMITTEE$')))
+ny$contbr_nm[indices]
+
+ny$contbr_nm[ny$contbr_nm=="MCMAHON, JILLP"] <- "MCMAHON, JILL"
+ny$contbr_nm[ny$contbr_nm=="ROOSEVELTD"] <- "ROOSEVELT, D" 
+ny$contbr_nm[ny$contbr_nm=="KARAKAS, ERDINC"] <- "KARAKAS, ERDIN" 
+
+indices <- which(str_detect(ny$contbr_nm,('LLC$|LLP$|FUND$|PAC$|CORP$|LTD$|INC$|COMMITTEE$')))
+ny$contbr_nm[indices]
+dim(ny)[1]
+ny <- ny[-c(indices),]
+dim(ny)[1]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+# Entries with more than one coma
+comas <- str_count(ny$contbr_nm, ',')
+max(comas)
+twos <- as.character(ny$contbr_nm[comas == 2])
+twos
+
+## - These cases are first names of a whole family,
+## Flag for when assigning gender, these will be "family"
+indices = which(ny$contbr_nm == "TIMKE, LEO, MICHELLE")
+ny$contbr_nm[indices]
+ny$contbr_nm[indices] = "TIMKE, LEO MICHELLE FAMILY"
+ny$contbr_nm[indices]
+
+indices = which(ny$contbr_nm == "YOUNG, BOB, CONNIE")
+ny$contbr_nm[indices]
+ny$contbr_nm[indices] = "YOUNG, BOB CONNIE FAMILY"
+ny$contbr_nm[indices]
+
+# Checking number of comas after changes made
+comas <- str_count(ny$contbr_nm, ',')
+max(comas)
+sum(comas ==0)/dim(ny)[1]
+sum(comas ==1)/dim(ny)[1]    # -- Most have one coma
+
+ny$contbr_nm[which(comas == 2)]
+ny$contbr_nm[which(comas == 0)]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+# Single words without coma
+words_1 <- which(str_detect(ny$contbr_nm, ("^(\\w+)$|^(\\w+\\-\\w+)$|^(\\w+\\'\\w+)$")))
+ny$contbr_nm[words_1]
+    ## Add coma after first word
+    ny$contbr_nm[words_1] <- gsub('$', ',',   ny$contbr_nm[words_1])
+    ny$contbr_nm[words_1]
+    # test <- separate(subset(ny, ny$contbr_nm %in% ny$contbr_nm[words_1]), contbr_nm, c("lastnm", "firstnm"), sep = ",")
+    
+## Notice that there are several that are single letters, it seems that some
+# donors gave only their initials for their last name also. This is not an
+# artifice of the changes I've made, see the examples from the unchanged dataset
+# as well.
+ny$contbr_nm[which(str_detect(ny$contbr_nm, ('^(\\w{1}\\,*)$')))]
+old_ny$contbr_nm[37515]
+# Single letter lastnames do not make a difference, so they're left as is
+
+# Two words without coma
+words_2 <- which(str_detect(ny$contbr_nm, ("^((\\w+)|(\\w+\\-\\w+)|(\\w+\\'\\w+))\\s+((\\w+)|(\\w+\\-\\w+)|(\\w+\\'\\w+))$")))
+ny$contbr_nm[words_2]
+
+indices = which(str_detect(ny$contbr_nm,  ("FOURNIER EUROPUBLICITY")))
+ny$contbr_nm[indices]
+ny <- ny[-c(indices),]
+
+words_2 <- which(str_detect(ny$contbr_nm, ("^((\\w+)|(\\w+\\-\\w+)|(\\w+\\'\\w+))\\s+((\\w+)|(\\w+\\-\\w+)|(\\w+\\'\\w+))$")))
+ny$contbr_nm[words_2]
+   ## Add coma after first word
+   ny$contbr_nm[words_2] <- str_replace(ny$contbr_nm[words_2],' ',',')
+   ny$contbr_nm[words_2]
+
+      
+# Three words without coma-- these have to be fixed manually, 50 instances:
+# some are people, some are not people
+words_3 <- which(str_detect(ny$contbr_nm,("^((\\w+)|(\\w+\\-\\w+)|(\\w+\\'\\w+))(\\s+((\\w+)|(\\w+\\-\\w+)|(\\w+\\'\\w+))){2,}$")))
+ny$contbr_nm[words_3]
+
+## From a visual assessment, most are not people. So: - manually correct those cases that are people, and - delete the rest
+ny$contbr_nm[words_3]
+
+### - manually correct those cases that are people
+indices = which(ny$contbr_nm == "FENTY ROBERT ALDEN")
+ny$contbr_nm[indices]
+ny$contbr_nm[indices] = "FENTY, ROBERT ALDEN"
+ny$contbr_nm[indices]
+
+indices = which(ny$contbr_nm == "DU HART JOHN")
+ny$contbr_nm[indices]
+ny$contbr_nm[indices] = "DU HART, JOHN"
+ny$contbr_nm[indices]
+
+indices = which(ny$contbr_nm == "W HESS DAVID")
+ny$contbr_nm[indices]
+ny$contbr_nm[indices] = "W HESS, DAVID"
+ny$contbr_nm[indices]
+
+indices = which(ny$contbr_nm == "VON SCHORN CLAUS")
+ny$contbr_nm[indices]
+ny$contbr_nm[indices] = "VON SCHORN, CLAUS"
+ny$contbr_nm[indices]
+
+indices = which(ny$contbr_nm == "LEWIN JOHNJACK JACK")
+ny$contbr_nm[indices]
+ny$contbr_nm[indices] = "LEWIN, JOHN JACK"
+ny$contbr_nm[indices]
+
+indices = which(ny$contbr_nm == "LO MARIA FILIPPA")
+ny$contbr_nm[indices]
+ny$contbr_nm[indices] = "LO, MARIA FILIPPA"
+ny$contbr_nm[indices]
+
+### - delete the three or more word strings that are not people
+words_3 <- which(str_detect(ny$contbr_nm,("^((\\w+)|(\\w+\\-\\w+)|(\\w+\\'\\w+))(\\s+((\\w+)|(\\w+\\-\\w+)|(\\w+\\'\\w+))){2,}$")))
+ny$contbr_nm[words_3]
+dim(ny)[1]
+ny <- ny[-c(words_3),]
+dim(ny)[1]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+## Cases containing 2 or more ampersands or AND
+matches <- str_count(ny$contbr_nm,'(\\sAND\\s)|(([[:alpha:]]|\\s)(\\&)([[:alpha:]]|\\s))')
+ny$contbr_nm[which(matches > 1)]
+ny$contbr_nm[which(matches == 1)]
+ny$contbr_nm[which(matches == 0)]
+
+### The ones that have 2 or more, fix manually
+ny$contbr_nm[which(matches > 1)]
+
+ny$contbr_nm[which(ny$contbr_nm == "BROH AND JAFFE, LEA AND AARON")] <- "BROH-JAFFE, LEA AARON FAMILY"
+matches <- str_count(ny$contbr_nm,'(\\sAND\\s)|(([[:alpha:]]|\\s)(\\&)([[:alpha:]]|\\s))')
+ny$contbr_nm[which(matches > 1)]
+
+## Cases containing one ampersand or AND
+matches <- str_count(ny$contbr_nm,'(\\sAND\\s)|(([[:alpha:]]|\\s)(\\&)([[:alpha:]]|\\s))')
+ny$contbr_nm[which(matches == 1)]
+
+### The ones that have & are families, except for a union
+#### - Delete manually the companies that have &
+indices = which(ny$contbr_n == "RETAIL, WHOLESALE & DEPARTMENT STORE UNION COMMITTEEPOLITICAL EDUCATION")
+ny$contbr_nm[indices]
+dim(ny)[1]
+ny <- ny[-c(indices),]
+dim(ny)[1]
+
+#### - The cases that have one & or AND, add family to the end 
+matches <- str_count(ny$contbr_nm,'(\\sAND\\s)|(([[:alpha:]]|\\s)(\\&)([[:alpha:]]|\\s))')
+length(which(matches == 1))
+ny$contbr_nm[which(matches == 1)]
+ny$contbr_nm[which(matches == 1)] <- gsub('$', ' FAMILY', ny$contbr_nm[which(matches == 1)])
+ny$contbr_nm <- str_replace(ny$contbr_nm, '(\\s+AND\\s+)|\\&', ' ')
+ny$contbr_nm[which(matches == 1)]
+
+matches <- str_count(ny$contbr_nm,'(\\sAND\\s)|(([[:alpha:]]|\\s)(\\&)([[:alpha:]]|\\s))')
+ny$contbr_nm[which(matches == 1)]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+### Make ST. to ST-
+indices = which(str_detect(ny$contbr_nm,'^ST\\.|^ST\\s'))
+ny$contbr_nm[indices]
+ny$contbr_nm <- str_replace(ny$contbr_nm,"^ST\\.\\s+|^ST\\.+|^ST\\s+",'ST-')
+ny$contbr_nm[indices]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+### Two '' to become one '
+indices = which(str_detect(ny$contbr_nm,"(\\'\\s*){2,}"))
+ny$contbr_nm[indices]
+ny$contbr_nm[which(ny$contbr_nm == "PLANAKIS, ANTHONY 'TONYBEES'")] = "PLANAKIS, ANTHONY"
+ny$contbr_nm <- str_replace(ny$contbr_nm,"(\\'\\s*){2,}","\\'")
+ny$contbr_nm[indices]
+
+### Delete space after ' for cases like O' Brien
+indices = which(str_detect(ny$contbr_nm,"\\s*\\'\\s+"))
+ny$contbr_nm[indices]
+ny$contbr_nm <- str_replace(ny$contbr_nm,"\\s*\\'\\s+","\\'")
+ny$contbr_nm[indices]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+### Initials at beginning of string
+indices = which(str_detect(ny$contbr_nm,'^(\\w{1}\\.*\\s+)'))
+ny$contbr_nm[indices]
+ny$initials_3_beginning <- str_extract(ny$contbr_nm,'^(\\w{1}\\.*\\s+)')
+ny$contbr_nm <- str_replace(ny$contbr_nm,'^(\\w{1}\\.*\\s+)','')
+ny$contbr_nm[indices]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+### Delete info in parenthesis
+indices = which(str_detect(ny$contbr_nm,"\\(+.*\\)+"))
+ny$contbr_nm[indices]
+ny$contbr_nm <- str_replace(ny$contbr_nm,"\\(+.*\\)+","")
+ny$contbr_nm[indices]
+
+# Delete extraneous punctuation -- it isn't , or ' or -
+puncts = which(str_detect(ny$contbr_nm,"\\.|\\:|\\(|\\)|\\;"))
+ny$contbr_nm[puncts]
+
+ny$contbr_nm <- str_replace_all(ny$contbr_nm,"((\\(|\\)).*)|\\(|\\)","")
+ny$contbr_nm <- str_replace_all(ny$contbr_nm, "\\.|\\:|\\;","")
+
+ny$contbr_nm[puncts]
+puncts = which(str_detect(ny$contbr_nm,"\\.|\\:|\\(|\\)|\\;"))
+ny$contbr_nm[puncts]
+
+### Delete ' if at start or end of word, but not in cases like D'ORSAY
+indices = which(str_detect(ny$contbr_nm,"(?<=(^|\\,|\\s))(\\')|(\\')(?=($|\\,|\\s))"))
+ny$contbr_nm[indices]
+ny$contbr_nm <- str_replace(ny$contbr_nm,"(?<=(^|\\,|\\s))(\\')|(\\')(?=($|\\,|\\s))","")
+ny$contbr_nm[indices]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+## Delete manually the ones that are not people
+indices = which(ny$contbr_nm == "HILLARY VICTORY FUND - UNITEMIZED")
+  ny$contbr_nm[indices]
+  dim(ny)[1]
+  ny <- ny[-c(indices),]
+
+indices = which(ny$contbr_nm == "HILLARY ACTION FUND - UNITEMIZED" )
+  ny$contbr_nm[indices]
+  dim(ny)[1]
+  ny <- ny[-c(indices),]
+
+indices = which(ny$contbr_nm == "HISPANICS FOR TAX REDUCTIONS, HISPANICS FOR JOBS" )
+ny$contbr_nm[indices]
+dim(ny)[1]
+ny <- ny[-c(indices),]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+### Delete spaces around - '
+indices = which(str_detect(ny$contbr_nm,'(\\s+\\-\\s+)|(\\s+\\-[[:alpha:]])|([[:alpha:]]\\-\\s+)'))
+ny$contbr_nm[indices]
+ny$contbr_nm[ny$contbr_nm == "CEBENOYAN, SINAN - FATMA SINAN - FATMA"] <- "CEBENOYAN, SINAN-FATMA"
+ny$contbr_nm[ny$contbr_nm == "YOUNG- , TINA"] <- "YOUNG, TINA"
+ny$contbr_nm <- str_replace(ny$contbr_nm,'(\\s+\\-\\s+)|(\\s+\\-[[:alpha:]])|([[:alpha:]]\\-\\s+)','-')
+ny$contbr_nm[indices]
+
+# Delete / or \
+indices = which(str_detect(ny$contbr_nm,'\\/|\\\\'))
+ny$contbr_nm[indices]
+
+## Manual changes
+ny$contbr_nm <- str_replace(ny$contbr_nm,"HILL / WEINTRAUB, ROBERT / AUTUMN","HILL-WEINTRAUB, ROBERT AUTUMN FAMILY")
+ny$contbr_nm <- str_replace(ny$contbr_nm,"FORREST / NYER-EEDAP, BRAD A","FORREST-NYERNEEDAP, BRAD")
+ny$contbr_nm <- str_replace(ny$contbr_nm,"LUSS, LUSS/GERALD","LUSS, GERALD")
+ny$contbr_nm <- str_replace(ny$contbr_nm,"LEVIN/ LANE, HENRY","LEVIN-LANE, HENRY")
+ny$contbr_nm <- str_replace(ny$contbr_nm,"LANE/LEVIN, HANK","LANE-LEVIN, HANK")
+delete = which(ny$contbr_nm == "MARKOWITZ/BROOKLYN" )
+  ny$contbr_nm[delete]
+  dim(ny)[1]
+  ny <- ny[-c(delete),]
+  dim(ny)[1]
+ny$contbr_nm[indices]
+  
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+# Manual correction, added after being found in later pieces of code
+index <- which(ny$contbr_nm == "AT THE TABLE!")
+ny <- ny[-c(index),]
+
+index <- which(ny$contbr_nm == "NO DATA,DATA")
+ny <- ny[-c(index),]
+
+index <- which(str_detect(ny$contbr_nm,"INFORMATION"))
+ny <- ny[-c(index),]
+
+index <- which(str_detect(ny$contbr_nm,"MARYLUNA PIZZA"))
+ny <- ny[-c(index),]
+
+# Space,comas, periods, and check
+ny <- comasadjust(ny)
+ny <- periodsadjust(ny)
+ny <- spaceadjust(ny)
+check()
+
+# Last check of comas
+comas <- str_count(ny$contbr_nm, '\\,')
+ny$contbr_nm[which(comas > 1)]
+ny$contbr_nm[which(comas == 0)]
+
+```
+
+The full contributor name is separated into first and last name by a coma.
+In some cases, people have entered first and middle name as their first name, so I created a separate column with only the first word of the first name, in order to use it in the next section to determine gender.
+Those that did not enter a first name have NA, and those that are a family have FAMILY.
+```{r echo=FALSE, Creating_variables:_fname,lname}
+# Sepparate by coma
+ny$contbr_name <- ny$contbr_nm
+ny <- separate(ny, contbr_name, c("lastnm", "firstnm"), sep = ",", remove = FALSE, convert = FALSE)
+
+# Trim whitespace
+ny$firstnm <- str_trim(ny$firstnm)
+
+# How many do not have first name
+sum(ny$firstnm == "")
+
+# Create column firstnm_single with only the first name if more than one: 
+# "Mary-Margaret" > "Mary"
+ny$fnm <- str_extract(ny$firstnm, "^\\w+(\\s|$)")
+ny$fnm <- str_trim(ny$fnm)
+
+# Put "family" in ny$fnm for those entries that are a family
+ny$contbr_nm[which(str_detect(ny$contbr_nm, "FAMILY"))]
+ny$fnm[which(str_detect(ny$contbr_nm, "FAMILY"))] <- "FAMILY"
+
+# Capital letter only first        
+#ny$firstnm <- str_cap_words(str_lower_case(ny$firstnm))
+```
+
+Get gender of the first names (first word appearing as such) using package "gender".
+For the column gender, besides 'female' and 'male' add values: 
+- both: androgynous names
+- undet: undeterminate gender from name
+- family: donations as a family
+```{r echo=FALSE, Creating_variables:gender}
+
+### Year span for names used
+ny$min_birthyear = 1930
+ny$max_birthyear = 1998
+
+# Gender dataframe
+toks <- gender_df(ny, method = "ssa", name_col = "fnm", 
+                  year_col = c("min_birthyear", "max_birthyear"))
+colnames(toks)[1] = 'fnm'
+
+# Join gender dataframe to ny
+ny <- left_join(ny,toks, by = "fnm")
+
+# Code for names that can be given to BOTH sexes
+ny$gender <- ifelse(.20 < ny$proportion_female & ny$proportion_female < .80,
+                    'both', ny$gender)
+table(ny$gender)
+
+# Code for those that are a family
+ny$gender[which(str_detect(ny$contbr_nm,"FAMILY"))] <- 'family'
+
+# Code for NA values in gender
+ny$firstnm[which(is.na(ny$gender))]
+ny$gender <- ifelse(is.na(ny$gender), 'undet', ny$gender)
+table(ny$gender)
+
+### Provide summary -- Values from one column, gender
+# - names by gender code: F M
+# - names for both genders  code: both 
+# - names undetermined -- foreign, initial only, hyphenated: undet
+# - names not provided: NA
+total = dim(ny)[1]
+gender_summary <- ny %>% summarise(
+  female = sum(ny$gender == "female")/total,
+  male = sum(ny$gender == "male")/total,
+  both = sum(ny$gender == "both")/total,
+  undet = sum(ny$gender == "undet")/total,
+  family = sum(ny$gender == "family")/total)
+
+gender_summary = round(gender_summary*100,2)
+gender_summary
+
+# Check the undeterminates
+unique(ny$firstnm[which((ny$gender == 'undet')&(ny$fnm != ""))])
+```
+
+The percentage of names of undeterminate gender is relatively large, 3.68% of the data. 
+From a cursory visual analysis of the unique names of undeterminate gender, it shows that most are "foreign" names unlikely to have been used much to name babies born in the US in the range of years specified, and thus the "gender" package is not well equipped to deal with them.
+In all honesty, there are other cases of anglo or common names that have either been mispelled or had an initial attached to the end ("WILLIAMW","CHRISTINM","GEOFFROY","GENRVIEVE","MLRIAM") or the ocasional joke ("BLEACHWHITE"). Dealing with this is possible, but I'll leave it for another time.
+```{r}
+gender_summary
+unique(ny$firstnm[which((ny$gender == 'undet')&(ny$fnm != ""))])
+```
+
+I created the column candidate that contains solely the last name of each candidate. There's no overlap in their lastnames, and referring to them this way makes it much easier and more covenient to manipulate the data and read it.
+```{r echo=FALSE, Creating_new_variables_candidates}
+### Separate First name, and Last name
+ny <- separate(ny, cand_nm, c("candidate", "candidate_fn"), sep = ",")
+```
+
+I created the column party, as the party the contribution went to, based on the candidate donated to, based on easily verifiable information freely available to the public.
+```{r echo=FALSE, Creating_new_variables_Party}
+democrat <- c("Clinton","Sanders", "O'Malley", "Webb", "Lessig")
+republican <- c("Trump","Cruz","Walker", "Bush","Rubio","Kasich","Christie",
+                  "Carson","Paul","Fiorina","Santorum","Jindal","Huckabee",
+                  "Pataki","Gilmore","Perry","McMullin", "Graham")
+green <- c("Stein")
+libertarian <- c("Johnson")
+ny$party<-ifelse(ny$candidate %in% democrat,'D',NA)
+ny$party<-ifelse(ny$candidate %in% republican,'R',ny$party)
+ny$party<-ifelse(ny$candidate %in% green,'G',ny$party)
+ny$party<-ifelse(ny$candidate %in% libertarian,'L',ny$party)
+```
+
+I cleaned the existing contbr_zip column as column zip. I used this to join my dataset to a USPS zip-city database, with added latitude and longitude for each zip, and their city match.
+```{r echo=FALSE, Creating_new_variables_Zip_Ziplatitude_Ziplongitude}
+### ZIP_MATCH table  zip-city reference database
+# Upload zip-city-county database
+zip_match <- read.csv("swt-us-commercial-full.csv")
+zip_match <- subset(zip_match, State == "NY")
+zip_match <- arrange(zip_match, City)
+colnames(zip_match)[1] <- 'Zip'
+
+# Rename colums Latitude and Longitude to: Latitude_zip and Longitude_zip
+for (i in 7:8){
+  colnames(zip_match)[i] <- str_c(colnames(zip_match)[i], "_zip")}
+
+# Zip column is int in zip_match and zips like 00501 come as 501, fix this
+zip_match <- arrange(zip_match, Zip)
+head(zip_match$Zip)
+zip_match$Zip <- as.character(zip_match$Zip)
+for (i in 1:dim(zip_match)[1]){
+  missing_digits <- 5 - nchar(zip_match$Zip[i])
+  zeros <- paste(replicate(missing_digits, "0"), collapse = "")
+  zip_match$Zip[i] <- str_c(zeros,zip_match$Zip[i])}
+
+good_zips <- sort(unique(zip_match$Zip))
+
+
+## ZIPS
+# Creating ny$zip
+ny$zip <- as.character(ny$contbr_zip)
+ny$zip <- str_sub(ny$zip, start = 1, end = 5)
+
+# ny$zip has zips like 00501 come as 501, fix this
+ny$zip <- gsub('[[:punct:]]|[[:space:]]','',ny$zip)
+indices <- nchar(ny$zip) == 4  # There ny$zip of 5 or 4 digits, or empty
+ny$zip[indices] <- str_c("0",ny$zip[indices])
+length(which(indices))
+ny$zip[nchar(ny$zip) == 0] <- NA
+
+```
+
+I took the city data as it came in the campaign contributions database (link), and performed several transformations to clean and homogeneize the city column.
+STEPS:
+  cases
+  - if city was good (present in good_cities) but zip was bad (not present in good zips), city is used. If there's only one zip for that city, assign it, otherwise that zip is NA.
+  - conversely, if zip was good (present in good_zips) but city was bad (not present in good cities), zip is used. If there's only one city for that zip, assign it, otherwise that city is NA.
+  - if neither zip nor city are good, both are NA
+  - if both are good (both are present in good_cities and good_zips), check that they match (they correspond to each other in zip_match), if they match, keep them and process: zip to 5 digits, and city to title case and strip of punctuation and digits.
+  - if both are good (both are present in good_cities and good_zips), and they don't match (they don't correspond to each other in zip_match), if neither of them is valid (not present in their corresponding good_cities or good_zips), assign them both NA  
+
+  Notable is the case of New York City, which contains five counties (and matching buroughs), and many notable areas that are used to as geographical markers as well (Canal Street, Midtown, Manhattan, Nyc etc). They were all subsumed under the USPS preferred New York name for city.
+
+"Unusable observations"    
+  For a total of 649460 observations, only ---- are not usable cities. This amounts to .001% of the data. Since some of the entries in the city column made reference to foreign cities (ex: Tokyo, Mumbai, Moscow) or to cities in other states of the US (ex:) I decided to eliminate these rows altogether from my analysis. I will explore the composition of this small subset at the end of this project, for the sake of thoroughness and illustration. However, it's small size and heterogeneity of its composition should not lead us to strong conclusions.
+  
+  "City names, what they refer to"
+I used the USPS preferred city name for each. For example (GIVE EXAMPLE).
+STEPS to do this.
+This is the meaning of the city names we refer to.
+
+  "City population"
+  I tried to create a column with population information, but overlapping borders and the lack of a direct match between the names that donors gave and USPS uses with the names used by the Census Bureau, made making this task very difficult. This will require more learning on my behalf in order to accurately match the observations of the campaign contributions dataset to the Census Bureau datasets (https://factfinder.census.gov/faces/tableservices/jsf/pages/productview.xhtml?src=bkmk, https://www2.census.gov/programs-surveys/popest/datasets/2010-2016/cities/totals/sub-est2016_36.csv). It might also require learning of and accessing better databases in order to avoid any inaccuracies, such as having data points counted more than once or ignored.
+To give one example, the hamlet Accord (the preferred USPS 'city' name for the given zipcode) belongs to the Town of Rochester, which is itself made of several small hamlets.
+One immediate step would be exploring those entries of the campaign donor dataset against the Census Bureau dataset, and examine whether those left out are rural areas that do not count as "city". This hypothesis would again, require more time and knowledge.
+```{r echo=FALSE, Creating_new_variables_City}
+## CITIES
+# Creating ny$city
+ny$city <- as.character(ny$contbr_city)
+ny$city <- str_to_title(ny$city)
+  # Get rid of numbers and punctuation in city names
+ny$city <- str_replace_all(ny$city,"[:digit:]|[:punct:]","")
+  # If first char is a space, replace it with nothing
+ny$city[substring(ny$city,1,1) == " "] <- str_replace(ny$city, " ","")
+
+# Getting the cities in ny that are NOT in zip_match
+zip_match$City <- as.character(zip_match$City)
+good_cities <- sort(unique(as.character(zip_match$City)))
+
+length(which(!(ny$city %in% good_cities)))
+
+# Dealing with all possible names of New York City and all its buroughs
+for (i in 1:1) {
+nyc <- filter(zip_match, County == 'New York')
+nyc <- as.character(unique(nyc$City))
+   # City: New York   County: New York  Borough: Manhattan  County: New York - Manhattan
+   
+staten <- c("Staten Island")
+  # City: New York   County: Richmond   Borough: Staten Island  County: Richmond - Staten Island
+
+bronx <- filter(zip_match, County == 'Bronx')
+bronx <- as.character(unique(bronx$City))
+  # City: New York   County: Bronx   Borough: The Bronx  County: Bronx - Bronx
+
+queens <- filter(zip_match, County == 'Queens')
+queens <- as.character(unique(queens$City))
+  # City: New York   County: Queens   Borough: Queens   County: Queens - Queens
+
+brook <- filter(zip_match, County == 'Kings')
+brook <- as.character(unique(brook$City))
+  # City: New York   County: Kings    Borough: Brooklyn  County: Kings - Brooklyn
+}
+nycities <- c(brook, queens, bronx, staten, nyc)
+
+# Fixing problems of misstyped cities in ny and assigning NA to impossible cases
+# Case (4) when ny$city is ""  -- just 4 cases and they don't even have a zip
+ny$city[ny$city == ''] <- NA  # Just run this line
+
+# Using zipcode, If the city name is NOT in good_cities
+ny$check_city = FALSE
+ny$debug_city = 0
+for (i in 1:dim(ny)[1]) {
+  
+  # If the city name is NOT in good_cities
+  if (!(ny$city[i] %in% good_cities)) { 
+    print(i)
+    tab_check <- filter(zip_match, Zip == ny$zip[i])
+    
+    # If zipcode is usable -- that is, tab_check doesn't have 0 rows
+    if (dim(tab_check)[1] > 0) {
+      
+      # First, if there is a SINGLE CITY associated to the zipcode, 
+      # and there is a single city name, assign the city    
+      if (dim(tab_check)[1] == 1){
+        ny$city[i] <- as.character(tab_check$City)[1]
+        ny$debug_city[i] <- 1
+  
+      # Else if there are SEVERAL CITY NAMES associated to the zipcode, 
+      # and all are from NYC, assign 'New York'
+      } else if (dim(tab_check)[1] > 1 & 
+                 sum(!(as.character(tab_check$City) %in% nycities)) == 0) {
+        ny$city[i] <- 'New York'
+        ny$debug_city[i] <- 2
+
+      # Else if there there are SEVERAL CITY NAMES associated to the zipcode,
+      # NOT from nyc, assign the city with preferred A name
+      } else if (dim(tab_check)[1] > 1 &
+                 sum(!(as.character(tab_check$City) %in% nycities)) != 0){
+        
+            # Check for matches with the cities in tab_check
+            indices <- agrep(ny$city[i],as.character(tab_check$City))
+            
+            if (is_empty(indices)) {     # No match ny$city to zip cities
+              ny$city[i] <- NA
+              ny$debug_city[i] <- 3
+            } else if (length(indices) == 1) {   # Single match ny$city to zip cities
+              ny$city[i] <- as.character(tab_check$City[indices])
+              ny$debug_city[i] <- 4
+            } else {                     # Several matches ny$city to zip cities
+              
+              tab_check <- filter(tab_check, City %in% tab_check$City[indices])
+              if (sum(tab_check$Preference == 'A') == 1){ # If there's one A
+                     ny$city[i] <- as.character(filter(tab_check, Preference == 'A')$City)
+                     ny$debug_city[i] <- 5
+              }else{
+                     ny$city[i] <- as.character(tab_check$City[1])
+                     ny$debug_city[i] <- 6
+              }
+              print('Error 1') # In case that there are two 'A' in subset
+            }
+      }
+  
+    # If zipcode is NOT usable: NA or out of range
+    #  consequently, is_empty(tab_check) == TRUE   
+    } else {
+        # Check for matches of ny$city[i] in good_cities
+        indices <- agrep(ny$city[i],good_cities)
+        
+        if (is_empty(indices) | length(indices) > 8){
+          ny$city[i] <- NA
+          ny$debug_city[i] <- 7
+        } else if (length(indices) == 1){
+          ny$city[i] <- good_cities[indices]
+          ny$debug_city[i] <- 8
+        } else { # length(indices) <= 6 and length(indices) > 1
+          sub_A <- filter(zip_match, City %in% good_cities[indices])
+          if (sum(sub_A$Preference == 'A') == 1){
+            ny$city[i] <- as.character(filter(sub_A,Preference == 'A')$City)
+            ny$debug_city[i] <- 9
+          }else{
+            ny$city[i] <- as.character(sub_A$City[1])
+            ny$debug_city[i] <- 10
+          }
+        }
+      }
+  }
+  }
+
+# Errors known correct manually
+ny$city[as.character(ny$contbr_city) == "AMANGASETT"] <- "Amagansett"
+ny$city[as.character(ny$contbr_city) == "DE LANCEY"] <- "Delancey"
+ny$city[as.character(ny$contbr_city) == "E. ELMHURST"] <- "Elmhurst"
+ny$city[as.character(ny$contbr_city) == "E.NORTHPORT"] <- "Northport"
+ny$city[as.character(ny$contbr_city) == "WHITTIER PLAINS"] <- "White Plains"
+
+# Check that al city and zip match. Some city names that ARE in good_cities have bad zips.
+# i= 716  city is Paris and zip is 75016, but from zip_match 
+# Paris, Oneida county has zip 13456.    Assign NA to these cases.
+mismatched <-character(dim(ny)[1])
+for (i in 1:dim(ny)[1]){
+  # The zip and the city do not match in zip_match
+  A <- !( (ny$zip[i] %in% filter(zip_match, as.character(City) == ny$city[i])$Zip) &
+        (ny$city[i] %in% filter(zip_match, as.character(Zip) == ny$zip[i])$City) )
+  
+  # Neither the zip nor the city are not possible
+  B <- !(ny$zip[i] %in% good_zips) & !(ny$city[i] %in% good_cities)
+  
+  # Zip is not possible but city is
+  C <- !(ny$zip[i] %in% good_zips) & (ny$city[i] %in% good_cities)
+  
+  # City is not possible but zip is
+  D <- !(ny$city[i] %in% good_cities) & (ny$zip[i] %in% good_zips)
+  
+  if(A) {
+    if (B) {
+      ny$zip[i] <- NA
+      ny$city[i] <- NA
+      mismatched[i] <- 'B'
+      print(str_c('B', " ", as.character(i)))
+    }else if(C){
+      ny$zip[i] <- NA
+      mismatched[i] <- 'C'
+      print(str_c('C', " ", as.character(i)))
+    }else if(D){
+      ny$city[i] <- NA
+      mismatched[i] <- 'D'
+      print(str_c('D', " ", as.character(i)))
+    }  } }
+ny$mismatched <- mismatched
+
+# Remaining zip and city not in good_cities and good_zips become NA
+# Not necessary though cause this is already done
+ny$zips[!(ny$zip %in% good_zips)] <- NA
+ny$city[!(ny$city %in% good_cities)] <- NA
+
+# Getting city names to unique A type names in ny$cityA
+  # original A,B,C names
+ny$city_original <- ny$city
+
+  cities_A <- subset(zip_match, Preference == "A")
+  best_city_name <- unique(cities_A$City)
+  # names of A preferred city for that zip
+for (i in which(!(ny$city %in% best_city_name) & !is.na(ny$city) & !is.na(ny$zip))) {
+    ny$city[i] <- as.character(filter(cities_A, Zip == ny$zip[i])$City) }
+
+  
+### SUMAARY of unusable rows
+## Summary of unusable cities
+unus_cities <-sum(is.na(ny$city))
+  # percentage unusable
+  unus_cities_perc <- unus_cities/dim(ny)[1]
+## Summary of unusable zips
+unus_zips <- sum(is.na(ny$zip))
+  # percentage unusable
+  unus_zips_perc <- unus_zips/dim(ny)[1]
+## Summary of unusable zips and cities
+unus_zips_cities <- sum(is.na(ny$zip)|is.na(ny$city))
+  # percentage unusable
+  unus_zips_cities_perc <- unus_zips_cities/dim(ny)[1]
+  
+
+### Join zip_match and ny
+colnames(zip_match) <- tolower(colnames(zip_match))
+ny <- left_join(ny,zip_match, by = c('zip', 'city'))
+
+```
+
+I used the package "noncensus" to add county population to my dataset.
+```{r echo=FALSE, Creating_new_variables_CountyCountypop}
+ny$county <- as.character(ny$county)
+
+## Getting county population
+data("counties")
+counties <- subset(counties, state == 'NY')
+colnames(counties)[4] <- 'fip_county'
+colnames(counties)[1] <- 'county'
+colnames(counties)[8] <- 'population_county'
+
+# Eliminate word "County at the end"
+counties$county <- str_replace(counties$county, " County", "")
+counties$county[which(counties$county == "St. Lawrence")] <- "Saint Lawrence"
+counties <- select(counties, -state_fips, -fips_class, -CSA, -CBSA)
+
+counties$state <- as.character(counties$state)
+counties$fip_county <- as.character(counties$fip_county)
+
+ny$county <- as.character(ny$county)
+ny <- left_join(ny, counties, by = c("county"))
+
+```
+
+I separated the existing column contb_receipt_dt into day, month, and year, and stated month as a number instead of a string.
+```{r echo=FALSE, Creating_new_variables_DayMonthYear}
+
+ny$contb_receipt_dt <- as.character(ny$contb_receipt_dt)
+ny <- separate(ny,contb_receipt_dt, c("day", "month","year"), sep = "-")
+
+ny$month[(ny$month == "JAN")] <- "01"
+ny$month[(ny$month == "FEB")] <- "02"
+ny$month[(ny$month == "MAR")] <- "03"
+ny$month[(ny$month == "APR")] <- "04"
+ny$month[(ny$month == "MAY")] <- "05"
+ny$month[(ny$month == "JUN")] <- "06"
+ny$month[(ny$month == "JUL")] <- "07"
+ny$month[(ny$month == "AUG")] <- "08"
+ny$month[(ny$month == "SEP")] <- "09"
+ny$month[(ny$month == "OCT")] <- "10"
+ny$month[(ny$month == "NOV")] <- "11"
+ny$month[(ny$month == "DEC")] <- "12"
+```
+
+I concatenated all days through months and years so that if "Dec 31 2015" is timepoint n, then "Jan 1 2016" is timepoint n+1 . And so on with all dates.
+```{r echo=FALSE, Creating_new_variables_TimePoint}
+# Time progression variable
+ny$time_point <- 0
+num = 1
+
+ny$day <- as.integer(ny$day)
+ny$month <- as.integer(ny$month)
+ny$year <- as.integer(ny$year)
+for (y in 13:16){
+  year <- subset(ny, year == y)
+    for (m in 1:12){
+      month <- subset(year, month == m)
+      if (m %in% c(1,3,5,7,8,10,12)){
+        days <- seq(1,31,1)}
+      else if (m %in% c(4,6,9,11)){
+        days <- seq(1,30,1)}
+      else{
+        if (y == 15){
+          days <- seq(1,28,1)}
+        else{
+          days <- seq(1,29,1)}
+      }
+      
+      # Assignning time point as num
+      for (d in days){
+        ny$time_point[which(ny$day == d & ny$month == m & ny$year == y)] = num
+          num = num+1
+        }
+    }
+}
+
+which(ny$time_point == 0)
+```
+
+I gave each donnor a unique donorID since the original dataset does not provide one. I determined that a donor was unique if the person has the same fullname, same city, and same zip.
+Due to typos when contribuyents entered their information, or if they moved, there could be a few inaccuracies here, but I expect them to be a very small number.
+```{r echo=FALSE, Creating_new_variables_DonorID}
+# Full name, city and zip to determine unique individuals
+
+ny$donor_id <- 0
+
+ny.names <- ny %>%
+  group_by(contbr_nm) %>%
+  summarise(conteo = n()) %>%
+  arrange(desc(conteo))
+
+various <- subset(ny.names, conteo > 1)
+single <- subset(ny.names, conteo == 1)
+
+id = 1
+for (i in 1:length(various$contbr_nm)){
+  tab <- subset(ny, contbr_nm == various$contbr_nm[i])
+  
+  for (j in 1:length(unique(tab$zip))){
+    indices <- which(ny$zip == unique(tab$zip)[j] & ny$contbr_nm == various$contbr_nm[i])
+    ny$donor_id[indices] <- id
+    id = id + 1
+  }
+}
+print(id)
+
+start <- id+1
+end <- dim(single)[1]+id
+
+start <- max(ny$donor_id+1)
+end   <- max(ny$donor_id+length(ny$donor_id[which(ny$donor_id == 0)]))
+ny$donor_id[which(ny$donor_id == 0)] <- seq(start, end, 1)
+
+length(ny$donor_id[which(ny$donor_id == 0)])
+
+```
+
+I created a county population bucket to be able to group counties together based on population.
+```{r, echo = FALSE, population_county_bucket, population_county_bucket_label}
+ny$population_county_bucket <- cut(ny$population_county, breaks = 100)
+```
+
+During EDA, I realized that there were problems with the contribution amounts, with some amounts being negative, and some greater than the maximum allowed for individual contribution to a single campaign.
+These account for a fraction of the original dataset (.01%, 8844 cases), and I deleted them.
+```{r, echo = FALSE, clean_contb_amount}
+summary(ny$contb_receipt_amt)
+
+length(which(ny$contb_receipt_amt < 0 | ny$contb_receipt_amt > 2700 | ny$contb_receipt_amt == 0))
+length(which(ny$contb_receipt_amt < 0 | ny$contb_receipt_amt > 2700 | ny$contb_receipt_amt == 0))/dim(old_ny)[1]
+
+ny <- ny[-c(which(ny$contb_receipt_amt < 0 | ny$contb_receipt_amt > 2700 | ny$contb_receipt_amt == 0)),]
+```
+
+There were also instances with incorrect zip entered (99999, 00000, or out of state). These were also a small fraction of the original dataset, but at 1% (640513 cases), I decided to leave them. I also left Na cases of city and county.
+```{r, echo = FALSE, clean_zips}
+# Final clean
+length(is.na(ny$zip))
+length(is.na(ny$zip))/dim(old_ny)[1]
+```
+
+I created a contribution amount bucket based on the amount quartiles.
+```{r, echo = FALSE, contribution_amount_bucket}
+summary(ny$contb_receipt_amt)
+# Contribution amount - discrete
+ny$amount_bucket <- cut(ny$contb_receipt_amt, c(0, 15, 27, 100, 2700))
+```
+
+Saving whole dataframe and smaller select columns dataframe for analysis
+```{r echo=FALSE, Saving_dataframe}
+setwd('/Users/amui/Dropbox/learn/Data_Analyst_nanodegree/project_2_EDA_Exploratory_Data_Analysis/')
+
+# Whole cleaned and prepared dataframe
+write.csv(ny, "campaign_contrib-NY_modified_all_columns.csv")
+
+# Smaller dataset for analysis, only columns relevant for analysis
+colnames(ny)[which(colnames(ny) == "contb_receipt_amt")] <- "amount"
+colnames(ny)[which(colnames(ny) == "contbr_nm")] <- "wholename"
+
+ny<- select(ny,candidate, lastnm, firstnm, wholename,
+            amount, amount_bucket, 
+            day, month, year,time_point, gender, party,
+            zip,  latitude_zip, longitude_zip,
+            county, population_county,population_county_bucket,
+            city,
+            title_1, title_2, title_3,
+            contbr_employer, contbr_occupation,
+            election_tp, donor_id)
+ny$state <- "NY"
+
+setwd('/Users/amui/Dropbox/learn/Data_Analyst_nanodegree/project_2_EDA_Exploratory_Data_Analysis/')
+write.csv(ny, "campaign_contrib-NY_modified_USED_FOR_ANALYSIS.csv")
+```
+
+
+Could have added day of the week
+```{r echo=FALSE, Problems_with_dataset}
+
+cities_missing <- ny %>%
+  filter(is.na(population_city)) %>%
+  select(city)
+
+print('Out of 649460 observations, 292014 have a city name problem')
+print('Likely misspellings to be solved in further work')
+
+unique_cities_missing <- unique(cities_missing)
+
+```
+
