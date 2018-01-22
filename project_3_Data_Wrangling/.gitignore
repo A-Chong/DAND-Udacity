@@ -1,0 +1,14 @@
+# Ignore everything
+*
+
+# But not these files...
+!.gitignore
+!dog_mask.png
+!dog_wordcloud.png
+!Data wrangling final project.ipynb
+# etc...
+
+# ...even if they are in subdirectories
+#!*/
+
+# https://stackoverflow.com/questions/987142/make-gitignore-ignore-everything-except-a-few-files
